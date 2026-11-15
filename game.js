@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
-   fazenda_leankar  -  HTML5 Canvas + JavaScript puro
+   FAZENDA LAS  -  HTML5 Canvas + JavaScript puro
    Assets: recortados das folhas "Game Asset Sheet" de Elias e Karen
    (assets/fazendeiro, assets/fazendeira, assets/tile_*.png)
    + arte procedural em art.js
@@ -80,11 +80,14 @@
   const BASKET_CAP = [20, 40, 80], BASKET_COST = [0, 150, 400];
   const CAN_CAP = [15, 30, 50], CAN_COST = [0, 120, 350];
   const BOOTS = [1, 1.18, 1.36], BOOTS_COST = [0, 220, 520];
-  const EGG_PRICE = 28, STONE_PRICE = 9, WOOD_PRICE = 10, MILK_PRICE = 42, TRUFFLE_PRICE = 80, MEAT_PRICE = 55;
+  const EGG_PRICE = 28, STONE_PRICE = 9, WOOD_PRICE = 10, MILK_PRICE = 42, TRUFFLE_PRICE = 80, MEAT_PRICE = 30;
+  const SLEEP_FROM = 18 * 60;                           // só dá para dormir a partir das 18:00
+  const MAX_BUSH = 70;                                  // limite de mato no mapa (nasce mato novo toda noite)
+  const SAVE_VERSION = 1;
   const N_CHICKENS = 6;                                  // galinhas no galinheiro (botam ovos 2× por dia)
   const ANIMAL_SHOP = {
     vaca:   { name: 'Vaca',   cost: 260, max: 4, img: 'assets/animais/vaca/front34.png',   info: 'Dá leite todo dia (vende 42 ◎). Ordenhe com E.' },
-    porco:  { name: 'Porco',  cost: 180, max: 4, img: 'assets/animais/porco/front34.png',  info: 'Dá carne 2× por dia (vende 55 ◎) e acha trufas (80 ◎). Pegue com E.' },
+    porco:  { name: 'Porco',  cost: 180, max: 4, img: 'assets/animais/porco/front34.png',  info: 'Dá carne 2× por dia (vende 30 ◎) e acha trufas (80 ◎). Pegue com E.' },
     cavalo: { name: 'Cavalo', cost: 650, max: 2, img: 'assets/animais/cavalo/front34.png', info: 'Monte com E e cavalgue quase 2× mais rápido.' },
   };
   const GOALS = [
@@ -530,11 +533,20 @@
     } catch (e) { /* ignore */ }
   }
   function loadSave() {
+    let j = null;
     try {
-      const j = localStorage.getItem(SAVE_KEY); if (!j) return null;
-      const s = JSON.parse(j); if (!s || s.v !== 1) return null;
-      return Object.assign(newState(), s, { owned: Object.assign(newState().owned, s.owned), seeds: Object.assign(newState().seeds, s.seeds), harvest: Object.assign(newState().harvest, s.harvest), names: Object.assign({}, s.names) });
-    } catch (e) { return null; }
+      j = localStorage.getItem(SAVE_KEY); if (!j) return null;
+      const s = JSON.parse(j);
+      if (!s || typeof s !== 'object' || s.v !== SAVE_VERSION) throw new Error('versão de save desconhecida');   // (futuras migrações entram aqui)
+      const base = newState();
+      const r = Object.assign(base, s, { owned: Object.assign(base.owned, s.owned), seeds: Object.assign(base.seeds, s.seeds), harvest: Object.assign(base.harvest, s.harvest),
+        up: Object.assign(base.up, s.up), stat: Object.assign(base.stat, s.stat), names: Object.assign({}, s.names) });
+      if (s.laid === undefined) r.laid = r.min >= Animals.MIDDAY ? 2 : 1;      // save anterior às posturas de meio-dia: não repõe ovos ao carregar
+      return r;
+    } catch (e) {
+      try { if (j) localStorage.setItem(SAVE_KEY + '_backup', j); } catch (e2) { /* ignore */ }     // não perde o progresso em silêncio
+      return null;
+    }
   }
 
   /* ---------------- jogador ---------------- */
@@ -623,7 +635,7 @@
   function interactAt(tx, ty) {
     if (!inb(tx, ty)) return null;
     const an = Animals.at(tx, ty, S); if (an) return an;
-    if (ty === 4 && tx >= 7 && tx <= 9) return { type: 'door', label: 'E — Dormir (encerra o dia)' };
+    if (ty === 4 && tx >= 7 && tx <= 9) return { type: 'door', label: S.min < SLEEP_FROM ? 'Dormir só depois das 18:00' : 'E — Dormir (encerra o dia)' };
     if (inRect(STALL, tx, ty)) return { type: 'shop', label: 'E — Empório' };
     if (inRect(BIN, tx, ty)) return { type: 'bin', label: 'E — Vender tudo' };
     if (inRect(WELL, tx, ty)) return { type: 'well', label: 'E — Encher o regador' };
@@ -704,7 +716,7 @@
     if (it && it.type !== 'crop' && it.type !== 'egg' && !toolOwns && !(id === 'regador' && (it.type === 'water' || it.type === 'well'))) { interact(tx, ty); return; }
     const chk = toolCheck(tx, ty);
     if (!chk.ok) { if (chk.msg) { toast(chk.msg, 'bad'); Snd.error(); } else if (it) interact(tx, ty); return; }
-    if (S.energy < COST[chk.k]) { toast('Sem energia! Coma um lanche na loja ou vá dormir.', 'bad'); Snd.error(); return; }
+    if (S.energy < COST[chk.k]) { toast('Sem energia! Coma uma torta no empório ou espere as 18:00 para dormir.', 'bad'); Snd.error(); return; }
     const dur = id === 'picareta' ? .42 : id === 'machado' ? .45 : id === 'forcado' ? .4 : id === 'regador' ? .45 : chk.k === 'milk' || chk.k === 'meat' ? .85 : chk.k === 'pickTree' ? .5 : .3;
     act = { tool: id, k: chk.k, tx, ty, t: 0, dur, applied: false, lock: true };
     if (chk.k === 'milk') {                       // a vaca fica parada durante a ordenha
@@ -827,7 +839,9 @@
     if (Animals.isRiding() && (!it || it.type === 'dismount' || it.type === 'cavalo')) { Animals.dismount(); Snd.pop(); toast('Você desmontou.'); return; }
     if (!it) return;
     switch (it.type) {
-      case 'door': confirmSleep(); break;
+      case 'door':
+        if (S.min < SLEEP_FROM) { toast('Ainda é cedo para dormir — só depois das 18:00 🌆', 'bad'); Snd.error(); } else confirmSleep();
+        break;
       case 'shop': openShop(); break;
       case 'bin': sellAll(); break;
       case 'well': case 'water':
@@ -936,6 +950,16 @@
     }
   }
 
+  function bushSpotOK(x, y) {
+    if (blocked(x, y) || isWater(x, y) || isPath(x, y) || S.soil[idx(x, y)] !== 0 || cropAt(x, y)) return false;
+    if (Math.hypot(x * TS - P.x, y * TS - P.y) <= 3 * TS) return false;
+    if (Animals.inArea(x, y, 2) || inRect({ x: COOP.x - 1, y: COOP.y - 1, w: 4, h: 5 }, x, y)) return false;
+    if (S.digs.some(d => d[0] === x && d[1] === y)) return false;
+    if (S.truffleList.some(t => Math.floor(t[0] / TS) === x && Math.floor(t[1] / TS) === y)) return false;
+    if (eggs.some(e => Math.floor(e.x / TS) === x && Math.floor(e.y / TS) === y)) return false;
+    return true;
+  }
+
   // postura das galinhas (2× por dia: ao amanhecer e ao meio-dia); devolve quantos ovos apareceram
   function layEggs() {
     let n = 0;
@@ -980,10 +1004,11 @@
       if (!blocked(x, y) && !isWater(x, y) && !isPath(x, y) && S.soil[idx(x, y)] === 0 && !cropAt(x, y) && !Animals.inArea(x, y, 1) && !inRect(COOP, x, y) && !S.digs.some(d => d[0] === x && d[1] === y)) { S.digs.push([x, y]); break; }
     }
     while (S.digs.length > 3) S.digs.shift();
-    // mato novo
-    for (let n = 0; n < 4; n++) {
+    // mato novo (com limite, e longe de curral, galinheiro, ovos, trufas e tesouros)
+    let bushes = 0; for (const o of obs) if (o.type === 'bush') bushes++;
+    for (let n = 0; n < 4 && bushes < MAX_BUSH; n++) {
       const x = 3 + Math.floor(Math.random() * (MW - 6)), y = 7 + Math.floor(Math.random() * (MH - 10));
-      if (!blocked(x, y) && !isWater(x, y) && !isPath(x, y) && S.soil[idx(x, y)] === 0 && !cropAt(x, y) && Math.hypot(x * TS - P.x, y * TS - P.y) > 3 * TS && !inRect(COOP, x, y)) addObs('bush', x, y, Math.floor(Math.random() * 3), 1);
+      if (bushSpotOK(x, y)) { addObs('bush', x, y, Math.floor(Math.random() * 3), 1); bushes++; }
     }
     P.x = SPAWN.x; P.y = SPAWN.y; P.dir = 0; act = null;
     S.stat.sleep++;
@@ -1083,7 +1108,7 @@
       <b>Música:</b> <kbd>M</kbd> &nbsp; <b>Efeitos:</b> <kbd>N</kbd> &nbsp; <b>Pausa:</b> <kbd>Esc</kbd></div>
       <h3>Como jogar</h3>
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
-      ④ durma na porta do celeiro para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
+      ④ depois das 18:00, durma na porta do celeiro para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
       Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. As galinhas botam ovos 2× por dia (manhã e meio-dia) e os porcos dão carne 2× por dia. Dias com chuva regam tudo sozinhos!</div>
       <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb" data-a="close">Continuar</button></div>`);
   }
@@ -1137,7 +1162,7 @@
     else if (a === 'rename') openRename();
     else if (a === 'renamesave') {
       S.names = {}; $('modalBox').querySelectorAll('input[data-k]').forEach(i => { S.names[i.dataset.k] = cleanName(i.value, i.dataset.def); });
-      applyNames(S.names); $('nameInfo').textContent = CHAR.name; document.title = 'fazenda_leankar — ' + CHAR.name;
+      applyNames(S.names); $('nameInfo').textContent = CHAR.name; document.title = 'FAZENDA LAS — ' + CHAR.name;
       Snd.pop(); toast('Nome salvo: ' + CHAR.name + '!', 'good'); save(); closeModal();
     }
     else if (a === 'char') { const k = b.dataset.k; if (CHARACTERS[k]) { S.char = k; setCharacter(k); buildHotbar(); Snd.pop(); toast('Agora você joga com ' + CHAR.name + '!', 'good'); save(); closeModal(); } }
@@ -1231,7 +1256,7 @@
     if (st.till < 3) return 'Mova-se com <b>WASD</b>. Pressione <b>1</b> (Forcado) e <b>ESPAÇO</b> para arar a terra à sua frente (' + st.till + '/3).';
     if (st.plant < 3) return 'Agora pressione <b>3</b> (Sementes) e <b>ESPAÇO</b> sobre a terra arada para plantar (' + st.plant + '/3).';
     if (st.water < 3) return 'Pegue o Regador (<b>2</b>) e regue as plantas. Encha o regador no <b>poço</b> com <b>E</b> (' + st.water + '/3).';
-    if (st.sleep < 1) return 'Vá até a porta do celeiro (tábuas, no topo) e pressione <b>E</b> para <b>dormir</b> — as plantas regadas crescem de noite.';
+    if (st.sleep < 1) return 'Depois das <b>18:00</b>, vá até a porta do celeiro (tábuas, no topo) e pressione <b>E</b> para <b>dormir</b> — as plantas regadas crescem de noite.';
     if (st.harvest < 1) return 'Quando a planta estiver madura, use as <b>Luvas</b> (<b>4</b>) ou <b>E</b> para colher.';
     if (st.sold < 1) return 'Venda a colheita na <b>Caixa de Vendas</b> com <b>E</b>. Depois compre mais sementes na loja!';
     return '';
@@ -1244,6 +1269,7 @@
       if (k === 'escape' && running && modalOpen) closeModal();
       return;
     }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;            // Ctrl+C/N/M/E... são do navegador, não do jogo
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'tab'].includes(k)) e.preventDefault();
     if (!running) return;
     if (sleeping) return;
@@ -1499,6 +1525,7 @@
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = window.innerWidth; H = window.innerHeight;
     canvas.width = Math.floor(W * dpr); canvas.height = Math.floor(H * dpr);
+    g.imageSmoothingQuality = 'high';                 // mudar o tamanho do canvas reseta o contexto
     zoom = clamp(Math.min(W / 1180, H / 720), .62, 1.5);
   }
 
@@ -1924,14 +1951,14 @@
     for (const n of SPRITE_LIST) IMGS[n] = CHAR_IMGS[CHAR.id][n];
     makeIcons();
     $('nameInfo').textContent = CHAR.name;
-    document.title = 'fazenda_leankar — ' + CHAR.name;
+    document.title = 'FAZENDA LAS — ' + CHAR.name;
     hudCache.bag = undefined; hudCache.slot2 = undefined;
   }
 
   function startGame(loadIt, charId, names) {
     Snd.init();
     S = loadIt ? (loadSave() || newState()) : newState();
-    if (!loadIt) { localStorage.removeItem(SAVE_KEY); S.char = CHARACTERS[charId] ? charId : 'fazendeiro'; }
+    if (!loadIt) { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* storage indisponível */ } S.char = CHARACTERS[charId] ? charId : 'fazendeiro'; }
     if (!CHARACTERS[S.char]) S.char = 'fazendeiro';
     if (!loadIt) { S.names = {}; for (const id of CHAR_IDS) S.names[id] = cleanName(names && names[id], CHARACTERS[id].defName); }
     applyNames(S.names);
@@ -1939,10 +1966,11 @@
     buildStatic();
     loadObs(S.obsInit ? S.obs : genObstacles()); S.obsInit = true;
     // limpar obstáculos sobre solo/ cultivo inválido
-    for (const o of [...obs]) if (solid[idx(o.x, o.y)]) removeObs(o);
+    for (const o of [...obs]) if (solid[idx(o.x, o.y)] || (o.type === 'bush' && (Animals.inArea(o.x, o.y, 0) || inRect(COOP, o.x, o.y)))) removeObs(o);   // (também limpa mato que saves antigos deixaram no curral)
     buildGround();
     spawnChickens();
-    Animals.bind({ P, blocked, isWater, boxBlocked, shadow: Art.shadow, Snd, heart, takeTruffle, time: () => time, MW, MH, icons: ICONS_CANVAS });
+    Animals.bind({ P, blocked, isWater, boxBlocked, shadow: Art.shadow, Snd, heart, takeTruffle, time: () => time, MW, MH, icons: ICONS_CANVAS,
+      onScreen: (x, y) => x > cam.x - 100 && x < cam.x + W / zoom + 100 && y > cam.y - 100 && y < cam.y + H / zoom + 100 });
     Animals.spawn(S);
     eggs = (S.eggList || []).map(e => ({ x: e[0], y: e[1] }));
     P.x = S.px; P.y = S.py; P.dir = S.dir || 0;
@@ -1955,7 +1983,7 @@
     running = true; paused = false; modalOpen = false;
     if (!loadIt || S.day === 1) toast('Bem-vindo à fazenda, ' + CHAR.name + '! 🌾', 'good');
     if (S.rain) toast('🌧️ Hoje está chovendo — as plantas já estão regadas.');
-    window.__game = { S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
+    if (/[?&]debug\b/.test(location.search)) window.__game = { S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
   }
 
   async function boot() {
@@ -2025,6 +2053,7 @@
       $('btnYes').onclick = () => { $('confirmNew').classList.add('hidden'); showSelect(true); };
       $('btnNo').onclick = () => $('confirmNew').classList.add('hidden');
       window.addEventListener('beforeunload', () => { if (running) save(); });
+      window.addEventListener('pagehide', () => { if (running) save(); });       // iOS/celular: beforeunload não é confiável
       document.addEventListener('visibilitychange', () => { if (document.hidden) { if (running) { save(); if (!modalOpen) openMenu(); } Snd.suspend(); } else Snd.resume(); });
       $('btnNew').disabled = false; $('btnContinue').disabled = false;
     } catch (e) {

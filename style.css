@@ -184,6 +184,7 @@ button.big.red { background: linear-gradient(#e0654a, #a8301a); border-color: #6
 #knob { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: rgba(255,255,255,.45); border: 3px solid rgba(255,255,255,.7); }
 #touchBtns { position: absolute; right: 16px; bottom: 100px; display: grid; grid-template-columns: 70px 70px; gap: 10px; pointer-events: auto; }
 #touchBtns button { height: 66px; border-radius: 50%; border: 3px solid var(--wood-d); background: linear-gradient(#b98350, #7a4d27); color: var(--cream); font-weight: bold; font-size: 15px; box-shadow: 0 3px 0 rgba(0,0,0,.4); touch-action: none; }
+@media (min-width: 480px) { #touchBtns { grid-template-columns: repeat(3, 66px); } }      /* 5 botões: 2 linhas quando há espaço */
 #touchBtns #tbAct { background: linear-gradient(#7fbf4a, #4d8a2a); }
 
 @media (max-width: 760px) {

@@ -170,7 +170,7 @@ const Animals = (() => {
       return;
     }
     a.follow -= dt;
-    if (dp > 1500) { a.x = P.x - VEC[P.dir][0] * 60; a.y = P.y - VEC[P.dir][1] * 40 + 24; a.stuck = 0; return; }
+    if (dp > 1500 && !(E.onScreen && E.onScreen(a.x, a.y))) { a.x = P.x - VEC[P.dir][0] * 60; a.y = P.y - VEC[P.dir][1] * 40 + 24; a.stuck = 0; return; }
     // segue por TRÁS do jogador (nunca no tile à frente, onde as ferramentas atuam)
     const bx = P.x - VEC[P.dir][0] * 70, by = P.y + 6 - VEC[P.dir][1] * 54;
     const dx = bx - a.x, dy = by - a.y, d = Math.hypot(dx, dy);

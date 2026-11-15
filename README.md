@@ -1,4 +1,4 @@
-# fazenda_leankar
+# FAZENDA LAS
 
 Jogo de fazenda em HTML5 Canvas + JavaScript puro (sem build, sem dependências).
 Abra `index.html` no navegador (Chrome/Edge/Firefox) e jogue.
@@ -23,13 +23,13 @@ Para adicionar outro personagem: crie `assets/<pasta>/` com os mesmos 16 sprites
 - **Curral** (a leste, cercado, com portão a oeste): compre na loja até **4 vacas** (leite diário, ordenhe com **E** quando aparecer o balão), **4 porcos** (carne 2× por dia e trufas) e **2 cavalos**.
 - **Cavalo:** **E** perto dele para montar, **E** de novo para desmontar. Cavalgando você anda quase 2× mais rápido, mas só interage (loja, caixa, poço), sem usar ferramentas.
 - **Ordenhar:** chegue perto da vaca com o balão de balde e use as **Luvas (4) + Espaço** (ou **E**). Uma vez por vaca por dia.
-- **Carne do porco:** 2 vezes por dia (ao amanhecer e a partir das 13:00) cada porco dá 1 carne — quando aparecer o balão de presunto, use **E** ou as **Luvas (4) + Espaço**. Carne vende por 55 ◎.
+- **Carne do porco:** 2 vezes por dia (ao amanhecer e a partir das 13:00) cada porco dá 1 carne — quando aparecer o balão de presunto, use **E** ou as **Luvas (4) + Espaço**. Carne vende por 30 ◎.
 - **Galinhas:** são 6 e botam ovos 2 vezes por dia (ao amanhecer e ao meio-dia, 13:00). Ovos não coletados da manhã ficam no chão até você dormir.
 - **Colher frutas:** perto de uma árvore com o balão de fruta, use as **Luvas (4) + Espaço** (ou **E**). O alvo "gruda" no que está pronto ao lado de onde você olha.
 - Leite, carne, trufas, frutas e ovos vão para o cesto/inventário e são vendidos na caixa de vendas.
 
 ## Como jogar
-Arar → plantar → regar → dormir na porta do celeiro → colher → vender na caixa → comprar mais sementes/melhorias.
+Arar → plantar → regar → (depois das 18:00) dormir na porta do celeiro → colher → vender na caixa → comprar mais sementes/melhorias.
 Pedras e tocos saem com a picareta; mato com o forcado; ovos das galinhas valem dinheiro.
 Dias de chuva regam tudo sozinhos. O progresso é salvo automaticamente (localStorage).
 
@@ -45,3 +45,10 @@ Dias de chuva regam tudo sozinhos. O progresso é salvo automaticamente (localSt
 ## Música e animações
 Música de fundo gerada em tempo real (WebAudio): tema alegre de dia, caixinha de música com grilos à noite e tema calmo com som de chuva nos dias chuvosos.
 Animações: sombras de nuvens, vento nas árvores/mato, borboletas, pássaros, folhas, vagalumes, respingos de chuva, brotar das plantas, galinhas que fogem, tremor ao quebrar pedra, entre outras.
+
+## Regras de tempo
+- O dia vai de 06:00 a 24:00 (270 s reais). **Só dá para dormir depois das 18:00**; à meia-noite o personagem desmaia de cansaço e acorda com energia parcial.
+- Ovos: 1ª postura ao amanhecer, 2ª às 13:00. Carne do porco: 1ª ao amanhecer, 2ª a partir das 13:00.
+- Mato novo nasce toda noite, mas há um limite (70) e ele não aparece no curral, no galinheiro nem sobre ovos/trufas/tesouros.
+- Para depurar no console, abra o jogo com `?debug` na URL (expõe `window.__game`).
+- Se um save não for reconhecido, ele é copiado para a chave `fazenda_leankar_v1_backup` do `localStorage` antes de qualquer sobrescrita.
