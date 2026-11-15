@@ -96,6 +96,7 @@
   /* ---------------- layout do mapa ---------------- */
   const BARN  = { x: 5,  y: 0, w: 7, h: 5 };
   const STALL = { x: 14, y: 3, w: 3, h: 2 };
+  const SIGN  = { x: 14, y: 6, w: 3, h: 1 };     // placa "FAZENDA LAS" na frente do empório (logo abaixo da trilha)
   const BIN   = { x: 18, y: 4, w: 2, h: 1 };
   const WELL  = { x: 21, y: 3, w: 2, h: 2 };
   const COOP  = { x: 26, y: 7, w: 2, h: 2 };
@@ -158,7 +159,7 @@
     const felled = new Set((S.felled || []).map(f => f[0] + ',' + f[1]));
     const r = Art.mulberry32(1234);
     const mark = (rect) => { for (let y = rect.y; y < rect.y + rect.h; y++) for (let x = rect.x; x < rect.x + rect.w; x++) solid[idx(x, y)] = 1; };
-    [BARN, STALL, BIN, WELL, COOP].forEach(mark);
+    [BARN, STALL, SIGN, BIN, WELL, COOP].forEach(mark);
     Animals.markSolid(solid, MW);
     for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
       const i = idx(x, y);
@@ -1646,6 +1647,7 @@
     const vis = (r) => r.x <= x1 + 1 && r.x + r.w >= x0 - 1 && r.y <= y1 + 1 && r.y + r.h >= y0 - 1;
     if (vis(BARN)) list.push({ y: (BARN.y + BARN.h) * TS - 10, d: () => g.drawImage(Art.barn, BARN.x * TS, (BARN.y + BARN.h) * TS - 320) });
     if (vis(STALL)) list.push({ y: (STALL.y + STALL.h) * TS - 8, d: () => g.drawImage(Art.stall, STALL.x * TS, (STALL.y + STALL.h) * TS - 150 + 6) });
+    if (vis(SIGN)) list.push({ y: (SIGN.y + 1) * TS - 6, d: () => g.drawImage(Art.sign, SIGN.x * TS, (SIGN.y + 1) * TS - 104 + 8) });
     if (vis(BIN)) list.push({ y: (BIN.y + 1) * TS - 6, d: () => g.drawImage(Art.bin, BIN.x * TS, (BIN.y + 1) * TS - 92 + 10) });
     if (vis(WELL)) list.push({ y: (WELL.y + WELL.h) * TS - 8, d: () => g.drawImage(Art.well, WELL.x * TS, (WELL.y + WELL.h) * TS - 138 + 10) });
     if (vis(COOP)) list.push({ y: (COOP.y + COOP.h) * TS - 8, d: () => g.drawImage(Art.coop, COOP.x * TS, (COOP.y + COOP.h) * TS - 124 + 8) });

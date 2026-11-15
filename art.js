@@ -311,6 +311,50 @@ const Art = (() => {
     });
   }
 
+  /* ---------------- PLACA "FAZENDA LAS" (3x1; 192x104) ---------------- */
+  function rrect(g, x, y, w, h, r) {
+    g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+  }
+  function drawSign() {
+    return mk(192, 104, (g, W, H) => {
+      shadow(g, W / 2, H - 9, 84, 8, .3);
+      // postes
+      for (const px of [24, 158]) {
+        const pg = g.createLinearGradient(px, 0, px + 10, 0); pg.addColorStop(0, '#8c5c33'); pg.addColorStop(1, '#4e3017');
+        g.fillStyle = pg; g.fillRect(px, 40, 10, H - 46);
+        g.fillStyle = '#4e3017'; g.fillRect(px - 1, H - 12, 12, 5);
+      }
+      // tabuleiro de madeira
+      const bx = 5, by = 6, bw = 182, bh = 58;
+      g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(bx + 3, by + 5, bw, bh);
+      g.fillStyle = '#4a2b0e'; rrect(g, bx, by, bw, bh, 7); g.fill();
+      const wg = g.createLinearGradient(0, by, 0, by + bh); wg.addColorStop(0, '#e2b878'); wg.addColorStop(1, '#bf8a4c');
+      g.fillStyle = wg; rrect(g, bx + 4, by + 4, bw - 8, bh - 8, 4); g.fill();
+      g.strokeStyle = 'rgba(80,45,12,.35)'; g.lineWidth = 1.2;
+      for (const y of [by + 20, by + 38]) { g.beginPath(); g.moveTo(bx + 4, y); g.lineTo(bx + bw - 4, y); g.stroke(); }
+      g.strokeStyle = 'rgba(80,45,12,.18)';
+      for (let x = bx + 16; x < bx + bw - 10; x += 34) { g.beginPath(); g.moveTo(x, by + 5); g.lineTo(x + 3, by + 19); g.moveTo(x + 14, by + 21); g.lineTo(x + 11, by + 37); g.stroke(); }
+      // pregos
+      g.fillStyle = '#3a3a3a';
+      for (const [nx, ny] of [[bx + 10, by + 10], [bx + bw - 10, by + 10], [bx + 10, by + bh - 10], [bx + bw - 10, by + bh - 10]]) { g.beginPath(); g.arc(nx, ny, 2, 0, TAU); g.fill(); }
+      // texto
+      const txt = 'FAZENDA LAS';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      let fs = 30; g.font = `bold ${fs}px Georgia, serif`;
+      const maxW = bw - 36; const tw = g.measureText(txt).width; if (tw > maxW) { fs = Math.floor(fs * maxW / tw); g.font = `bold ${fs}px Georgia, serif`; }
+      g.fillStyle = 'rgba(255,240,205,.7)'; g.fillText(txt, W / 2 + 1, by + bh / 2 + 2);
+      g.fillStyle = '#3b1f08'; g.fillText(txt, W / 2, by + bh / 2 + 1);
+      // mato e florzinhas na base
+      for (const bxx of [18, 166]) {
+        for (let i = 0; i < 5; i++) leaf(g, bxx + 5 + (i - 2) * 4, H - 9, -Math.PI / 2 + (i - 2) * .45, 10 + (i % 2) * 4, 3);
+      }
+      for (const [fx, fy, c] of [[14, H - 12, '#ffd24d'], [30, H - 10, '#ff8a70'], [162, H - 11, '#ff8a70'], [178, H - 12, '#ffd24d']]) {
+        ball(g, fx, fy, 3, '#fff6c8', c);
+      }
+    });
+  }
+
   /* ---------------- CAIXA DE VENDAS (2x1; 128x90) ---------------- */
   function drawBin() {
     return mk(128, 92, (g, W, H) => {
@@ -609,9 +653,9 @@ const Art = (() => {
   const out = {
     TAU, mk, ball, leaf, shadow, mulberry32, crops, drawCan, drawChicken, drawEgg, icon,
     CW, CH, FRUIT_SP,
-    barn: null, stall: null, bin: null, well: null, coop: null, trees: [], rocks: [], stump: null, bushes: [],
+    barn: null, stall: null, sign: null, bin: null, well: null, coop: null, trees: [], rocks: [], stump: null, bushes: [],
     init() {
-      this.barn = drawBarn(); this.stall = drawStall(); this.bin = drawBin(); this.well = drawWell(); this.coop = drawCoop();
+      this.barn = drawBarn(); this.stall = drawStall(); this.sign = drawSign(); this.bin = drawBin(); this.well = drawWell(); this.coop = drawCoop();
       this.trees = [0, 1, 2].map(drawTree); this.rocks = [0, 1].map(drawRock); this.stump = drawStump();
       this.bushes = [0, 1, 2].map(drawBush);
       // ícone do regador
