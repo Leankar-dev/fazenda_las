@@ -5,6 +5,7 @@ Abra `index.html` no navegador (Chrome/Edge/Firefox) e jogue.
 
 ## Personagens
 Em **Novo jogo** você escolhe entre **Elias** (o fazendeiro) e **Karen** (a fazendeira). Os dois têm as mesmas habilidades; a escolha é salva no jogo e pode ser trocada a qualquer momento em **Esc → Trocar personagem**.
+Na tela de escolha você também **dá um nome a cada personagem** (padrão: Elias e Karen, até 16 letras); depois, em **Esc → Alterar nome**, dá para trocar quando quiser. Os nomes ficam no save (saves antigos continuam com os nomes padrão).
 Para adicionar outro personagem: crie `assets/<pasta>/` com os mesmos 16 sprites e registre-o em `CHARACTERS` no `game.js`.
 
 ## Controles

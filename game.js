@@ -34,6 +34,11 @@
     fazendeira: { id: 'fazendeira', name: 'Karen', role: 'A Fazendeira', desc: 'Camisa xadrez vermelha, cinto de ferramentas e mão boa para a terra.', folder: 'assets/fazendeira' },
   };
   const CHAR_IDS = Object.keys(CHARACTERS);
+  for (const id of CHAR_IDS) CHARACTERS[id].defName = CHARACTERS[id].name;     // nome padrão (o jogador pode trocar)
+  const NAME_MAX = 16;
+  // limpa o nome digitado: sem < > & " (vai parar em innerHTML), espaços normalizados, até 16 letras; vazio = nome padrão
+  const cleanName = (v, def) => (String(v == null ? '' : v).replace(/[<>&"]/g, '').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX).trim()) || def;
+  function applyNames(names) { for (const id of CHAR_IDS) CHARACTERS[id].name = cleanName(names && names[id], CHARACTERS[id].defName); }
   let CHAR = CHARACTERS.fazendeiro;
   const charSrc = n => CHAR.folder + '/' + n + '.png';
   const SPRITE_LIST = ['back', 'back34r', 'basket', 'belt', 'bottomup', 'front_stand', 'front_walk', 'glove1', 'glove2', 'left34', 'left_stand', 'pickaxe', 'pitchfork', 'seedbag_empty', 'seedbag_stack', 'topdown'];
@@ -142,7 +147,7 @@
       owned: { vaca: 0, porco: 0, cavalo: 0 }, milked: [], digs: [], truffleList: [],
       up: { basket: 0, can: 0, boots: 0 },
       char: 'fazendeiro', selSeed: 'cenoura', tool: 0, dir: 0, px: SPAWN.x, py: SPAWN.y,
-      rain: false, soil: new Array(MW * MH).fill(0), crops: {}, obs: [], eggList: [],
+      rain: false, soil: new Array(MW * MH).fill(0), crops: {}, obs: [], eggList: [], names: {},
       obsInit: false, felled: [], goal: 0, stat: { till: 0, plant: 0, water: 0, harvest: 0, sold: 0, sleep: 0 }, won: false,
     };
   }
@@ -526,7 +531,7 @@
     try {
       const j = localStorage.getItem(SAVE_KEY); if (!j) return null;
       const s = JSON.parse(j); if (!s || s.v !== 1) return null;
-      return Object.assign(newState(), s, { owned: Object.assign(newState().owned, s.owned), seeds: Object.assign(newState().seeds, s.seeds), harvest: Object.assign(newState().harvest, s.harvest) });
+      return Object.assign(newState(), s, { owned: Object.assign(newState().owned, s.owned), seeds: Object.assign(newState().seeds, s.seeds), harvest: Object.assign(newState().harvest, s.harvest), names: Object.assign({}, s.names) });
     } catch (e) { return null; }
   }
 
@@ -1058,17 +1063,29 @@
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
       ④ durma na porta do celeiro para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
       Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. Pegue os ovos das galinhas todo dia. Dias com chuva regam tudo sozinhos!</div>
-      <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="save">Salvar</button><button class="mb" data-a="close">Continuar</button></div>`);
+      <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb" data-a="close">Continuar</button></div>`);
   }
 
   function openCharPicker() {
     currentModal = 'chars';
     setModal(`<h2>👤 Trocar personagem</h2><p>É só visual: seu progresso na fazenda continua o mesmo.</p><div class="cards inModal">${CHAR_IDS.map(id => cardHtml(CHARACTERS[id], id === S.char)).join('')}</div><div class="modalBtns"><button class="mb alt" data-a="close">Voltar</button></div>`);
   }
-  function cardHtml(c, cur) {
-    return `<button class="charCard${cur ? ' cur' : ''}" data-a="char" data-k="${c.id}"><img src="${c.folder}/front_walk.png" alt="${c.name}"><b>${c.name}</b><span class="role">${c.role}</span><small>${c.desc}</small>${cur ? '<em>em uso</em>' : ''}</button>`;
+  function cardHtml(c, cur, edit) {
+    const card = `<button class="charCard${cur ? ' cur' : ''}" data-a="char" data-k="${c.id}"><img src="${c.folder}/front_walk.png" alt="${c.name}"><b class="cn">${c.name}</b><span class="role">${c.role}</span><small>${c.desc}</small>${cur ? '<em>em uso</em>' : ''}</button>`;
+    if (!edit) return card;
+    return `<div class="charWrap">${card}<label class="nameField"><span>Nome</span><input type="text" maxlength="${NAME_MAX}" data-k="${c.id}" data-def="${c.defName}" value="${c.name}" placeholder="${c.defName}" autocomplete="off" autocapitalize="words" spellcheck="false"></label></div>`;
+  }
+  function openRename() {
+    currentModal = 'rename';
+    setModal(`<h2>✏️ Alterar nomes</h2><p>Escolha como cada personagem se chama. Seu progresso na fazenda continua o mesmo.</p>
+      <div class="renameRows">${CHAR_IDS.map(id => `<label class="renameRow"><img src="${CHARACTERS[id].folder}/front_walk.png" alt=""><span>${CHARACTERS[id].role}</span><input type="text" maxlength="${NAME_MAX}" data-k="${id}" data-def="${CHARACTERS[id].defName}" value="${CHARACTERS[id].name}" placeholder="${CHARACTERS[id].defName}" autocomplete="off" autocapitalize="words" spellcheck="false"></label>`).join('')}</div>
+      <div class="modalBtns"><button class="mb alt" data-a="close">Cancelar</button><button class="mb" data-a="renamesave">Salvar</button></div>`);
+    const el = $('modalBox').querySelector('input[data-k="' + S.char + '"]'); if (el) { el.focus(); el.select(); }
   }
 
+  $('modalBox').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.matches('input')) { const ok = $('modalBox').querySelector('[data-a=renamesave]'); if (ok) ok.click(); }
+  });
   $('modalBox').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b || b.disabled) return;
     const a = b.dataset.a;
@@ -1095,6 +1112,12 @@
         toast(msg + ' (−' + costs[lvl] + ' ◎)', 'good'); openShop();
       } else Snd.error();
     } else if (a === 'chars') openCharPicker();
+    else if (a === 'rename') openRename();
+    else if (a === 'renamesave') {
+      S.names = {}; $('modalBox').querySelectorAll('input[data-k]').forEach(i => { S.names[i.dataset.k] = cleanName(i.value, i.dataset.def); });
+      applyNames(S.names); $('nameInfo').textContent = CHAR.name; document.title = 'fazenda_leankar — ' + CHAR.name;
+      Snd.pop(); toast('Nome salvo: ' + CHAR.name + '!', 'good'); save(); closeModal();
+    }
     else if (a === 'char') { const k = b.dataset.k; if (CHARACTERS[k]) { S.char = k; setCharacter(k); buildHotbar(); Snd.pop(); toast('Agora você joga com ' + CHAR.name + '!', 'good'); save(); closeModal(); } }
     else if (a === 'save') { save(); toast('Jogo salvo!', 'good'); }
     else if (a === 'resetask') { currentModal = 'reset'; setModal(`<h2>Novo jogo</h2><p>Começar um novo jogo? O progresso atual será perdido.</p><div class="modalBtns"><button class="mb red" data-a="reset">Sim, apagar</button><button class="mb" data-a="close">Cancelar</button></div>`); }
@@ -1194,6 +1217,10 @@
   /* ---------------- entrada ---------------- */
   window.addEventListener('keydown', e => {
     const k = e.key.toLowerCase();
+    if (e.target && e.target.tagName === 'INPUT') {      // digitando um nome: não é comando do jogo (espaço, setas, letras...)
+      if (k === 'escape' && running && modalOpen) closeModal();
+      return;
+    }
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'tab'].includes(k)) e.preventDefault();
     if (!running) return;
     if (sleeping) return;
@@ -1855,11 +1882,13 @@
     hudCache.bag = undefined; hudCache.slot2 = undefined;
   }
 
-  function startGame(loadIt, charId) {
+  function startGame(loadIt, charId, names) {
     Snd.init();
     S = loadIt ? (loadSave() || newState()) : newState();
     if (!loadIt) { localStorage.removeItem(SAVE_KEY); S.char = CHARACTERS[charId] ? charId : 'fazendeiro'; }
     if (!CHARACTERS[S.char]) S.char = 'fazendeiro';
+    if (!loadIt) { S.names = {}; for (const id of CHAR_IDS) S.names[id] = cleanName(names && names[id], CHARACTERS[id].defName); }
+    applyNames(S.names);
     setCharacter(S.char);
     buildStatic();
     loadObs(S.obsInit ? S.obs : genObstacles()); S.obsInit = true;
@@ -1923,18 +1952,26 @@
       // vitrine do título e tela de seleção
       $('titleImg1').src = CHARACTERS.fazendeiro.folder + '/front_walk.png';
       $('titleImg2').src = CHARACTERS.fazendeira.folder + '/front_walk.png';
-      $('cards').innerHTML = CHAR_IDS.map(id => cardHtml(CHARACTERS[id], false)).join('');
+      $('cards').innerHTML = CHAR_IDS.map(id => cardHtml(CHARACTERS[id], false, true)).join('');
       const showSelect = on => { $('charSelect').classList.toggle('hidden', !on); $('titleBox').classList.toggle('hidden', on); };
       // mostra o indicador de progresso e só então gera o mapa (que é pesado e congela a tela por um instante)
-      const begin = (loadIt, charId) => {
+      const begin = (loadIt, charId, names) => {
         $('busy').classList.remove('hidden');
         requestAnimationFrame(() => setTimeout(() => {
-          try { startGame(loadIt, charId); }
+          try { startGame(loadIt, charId, names); }
           catch (e) { console.error(e); showSelect(false); fail('Não foi possível iniciar o jogo (' + e.message + '). Recarregue a página.'); }
           $('busy').classList.add('hidden');
         }, 30));
       };
-      $('cards').addEventListener('click', e => { const b = e.target.closest('.charCard'); if (b) begin(false, b.dataset.k); });
+      // nomes digitados na tela de seleção (vão para o save do novo jogo)
+      const typedNames = () => { const n = {}; $('cards').querySelectorAll('input[data-k]').forEach(i => { n[i.dataset.k] = cleanName(i.value, i.dataset.def); }); return n; };
+      $('cards').addEventListener('click', e => { const b = e.target.closest('.charCard'); if (b) begin(false, b.dataset.k, typedNames()); });
+      $('cards').addEventListener('input', e => {       // o cartão mostra o nome enquanto você digita
+        const i = e.target.closest('input[data-k]'), cn = i && i.closest('.charWrap').querySelector('.cn');
+        if (cn) cn.textContent = cleanName(i.value, i.dataset.def);
+      });
+      $('cards').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input[data-k]')) begin(false, e.target.dataset.k, typedNames()); });
+      $('cards').addEventListener('focusin', e => { if (e.target.matches('input[data-k]')) e.target.select(); });
       $('btnBack').onclick = () => showSelect(false);
       $('btnContinue').onclick = () => begin(true);
       // confirmação na própria tela (confirm() do navegador pode estar bloqueado e deixava o botão "morto")
