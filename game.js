@@ -175,7 +175,7 @@
       if (Animals.inArea(x, y, 1)) forest = false;
       if (border || forest) {
         const tv = Math.floor(r() * 3);                       // (sempre sorteia, para o mapa não mudar)
-        if (!border && felled.has(x + ',' + y)) continue;     // árvore já cortada pelo jogador
+        if (felled.has(x + ',' + y)) continue;                // árvore já cortada pelo jogador (inclui as da borda)
         solid[i] = 1; const tr = { x, y, v: tv, border, hp: 5 }; trees.push(tr); treeGrid[i] = tr;
       }
     }
@@ -484,11 +484,12 @@
   /* ---------------- util UI ---------------- */
   function toast(msg, cls = '') {
     const box = $('toast');
-    while (box.children.length > 3) box.removeChild(box.firstChild);
+    const small = matchMedia('(pointer:coarse), (max-width: 760px)').matches;
+    while (box.children.length > (small ? 1 : 3)) box.removeChild(box.firstChild);
     const d = document.createElement('div'); d.textContent = msg; if (cls) d.className = cls;
     box.appendChild(d);
-    setTimeout(() => d.classList.add('out'), 2600);
-    setTimeout(() => d.remove(), 3100);
+    setTimeout(() => d.classList.add('out'), small ? 1800 : 2600);
+    setTimeout(() => d.remove(), small ? 2300 : 3100);
   }
   function fmt(n) { return Math.floor(n).toLocaleString('pt-BR'); }
   function cropIcon(k) { return ICONS[k]; }
@@ -670,7 +671,7 @@
         return { ok: false };
       case 'machado':
         if (ob && ob.type === 'ftree') return { ok: true, k: 'chop' };
-        if (treeGrid[i]) return treeGrid[i].border ? { ok: false, msg: 'As árvores da borda do mapa não podem ser cortadas' } : { ok: true, k: 'chop' };
+        if (treeGrid[i]) return { ok: true, k: 'chop' };
         if (ob && (ob.type === 'rock' || ob.type === 'stump')) return { ok: false, msg: 'Use a picareta (5)' };
         return { ok: false };
     }
@@ -1157,9 +1158,21 @@
     }
     // tutorial
     const t = tutorialText();
-    const tu = $('tutorial');
-    if (t) { if (hudCache.tut !== t) { hudCache.tut = t; tu.innerHTML = t; } tu.classList.remove('hidden'); } else tu.classList.add('hidden');
+    const tu = $('tutorial'), tg = $('tutToggle');
+    if (!t) { tu.classList.add('hidden'); tg.classList.add('hidden'); return; }
+    const compact = compactUI();
+    if (hudCache.tut !== t) { hudCache.tut = t; tu.innerHTML = t; if (compact) showTut(); }
+    const collapsed = compact && tutCollapsed;
+    tu.classList.toggle('hidden', collapsed);
+    tg.classList.toggle('hidden', !collapsed);
   }
+  // no celular a dica some sozinha (vira o botão 💡) para não tampar o jogo
+  let tutCollapsed = false, tutTimer = 0;
+  function compactUI() { return matchMedia('(pointer:coarse), (max-width: 760px)').matches; }
+  function showTut() { tutCollapsed = false; clearTimeout(tutTimer); tutTimer = setTimeout(hideTut, 7000); }
+  function hideTut() { tutCollapsed = true; clearTimeout(tutTimer); }
+  $('tutorial').addEventListener('click', hideTut);
+  $('tutToggle').addEventListener('click', showTut);
   function tutorialText() {
     const st = S.stat;
     if (st.till < 3) return 'Mova-se com <b>WASD</b>. Pressione <b>1</b> (Forcado) e <b>ESPAÇO</b> para arar a terra à sua frente (' + st.till + '/3).';

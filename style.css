@@ -57,6 +57,16 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
   box-shadow: 0 4px 0 rgba(0,0,0,.3); pointer-events: none;
 }
 #tutorial b { color: var(--gold); }
+#tutToggle {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%); width: 38px; height: 38px; border-radius: 50%;
+  border: 2px solid var(--gold); background: rgba(30, 18, 8, .72); font-size: 18px; line-height: 1; padding: 0; cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0,0,0,.3);
+}
+/* celular / toque: o card de dica não pode tampar a área de jogo */
+@media (pointer: coarse), (max-width: 760px) {
+  #tutorial { pointer-events: auto; cursor: pointer; opacity: .88; padding: 6px 28px 6px 10px; max-width: min(420px, 78vw); }
+  #tutorial::after { content: "✕"; position: absolute; right: 9px; top: 5px; font-size: 13px; color: var(--cream-d); }
+}
 
 /* ---------- cesto ---------- */
 #bag { right: 12px; bottom: 12px; min-width: 150px; max-width: 200px; font-size: 13px; }
@@ -171,7 +181,10 @@ button.big { font-size: 20px; padding: 10px 24px; }
   .slot img { max-width: 36px; max-height: 40px; }
   #hotbar { gap: 5px; padding: 10px 10px 8px; }
   #bag { display: none; }
-  #tutorial { top: 86px; max-width: 90vw; font-size: 12px; }
+  #tutorial { top: 86px; max-width: 78vw; font-size: 12px; }
+  #tutToggle { top: 86px; left: 12px; transform: none; width: 34px; height: 34px; font-size: 16px; }
+  #toast { bottom: 96px; max-width: 92vw; }
+  #toast div { font-size: 12px; padding: 4px 10px; white-space: normal; text-align: center; opacity: .92; }
   .titleBox { flex-direction: column; padding: 16px; }
   .duo img { height: 26vh; }
   .btnRow { margin-top: 4px; }
