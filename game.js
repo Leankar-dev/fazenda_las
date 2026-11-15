@@ -985,10 +985,10 @@
 
   /* ---------------- modais ---------------- */
   function setModal(html) {
-    $('modalBox').innerHTML = html; $('modal').classList.remove('hidden'); modalOpen = true; paused = true;
+    $('modalBox').innerHTML = html; $('modal').classList.remove('hidden'); modalOpen = true; paused = true; document.body.classList.add('modalOpen');
   }
   function closeModal() {
-    $('modal').classList.add('hidden'); modalOpen = false; paused = false;
+    $('modal').classList.add('hidden'); modalOpen = false; paused = false; document.body.classList.remove('modalOpen');
   }
   $('modal').addEventListener('mousedown', e => { if (e.target.id === 'modal' && currentModal !== 'win') closeModal(); });
   let currentModal = '';
@@ -1076,18 +1076,24 @@
     else if (a === 'sleep') { closeModal(); sleepSequence(false); }
     else if (a === 'buy') {
       const k = b.dataset.k, n = +b.dataset.n, c = CROPS[k]; const cost = c.seed * n;
-      if (S.gold >= cost) { S.gold -= cost; S.seeds[k] += n; Snd.buy(); if (S.seeds[k] === n) { S.selSeed = k; } openShop(); } else Snd.error();
+      if (S.gold >= cost) { S.gold -= cost; S.seeds[k] += n; Snd.buy(); if (S.seeds[k] === n) { S.selSeed = k; } toast('Comprou ' + n + (n > 1 ? ' sementes' : ' semente') + ' de ' + c.name.toLowerCase() + ' (−' + cost + ' ◎)', 'good'); openShop(); } else Snd.error();
     } else if (a === 'buytree') {
       const k = b.dataset.k, t = TREE_SP[k];
-      if (t && S.gold >= t.cost) { S.gold -= t.cost; S.seeds[k]++; if (S.seeds[k] === 1) S.selSeed = k; Snd.buy(); toast('Muda de ' + t.name.toLowerCase() + ' comprada! Plante com a ferramenta 3.', 'good'); openShop(); } else Snd.error();
+      if (t && S.gold >= t.cost) { S.gold -= t.cost; S.seeds[k]++; if (S.seeds[k] === 1) S.selSeed = k; Snd.buy(); toast('Comprou uma muda de ' + t.name.toLowerCase() + ' (−' + t.cost + ' ◎). Plante com a ferramenta 3!', 'good'); openShop(); } else Snd.error();
     } else if (a === 'animal') {
       const k = b.dataset.k, an = ANIMAL_SHOP[k];
-      if (an && S.gold >= an.cost && (S.owned[k] || 0) < an.max) { S.gold -= an.cost; S.owned[k] = (S.owned[k] || 0) + 1; Animals.add(k); Snd.buy(); if (k === 'vaca') Snd.moo(); else if (k === 'porco') Snd.oink(); else Snd.neigh(); toast('Novo ' + an.name.toLowerCase() + ' no curral! 🐾', 'good'); openShop(); } else Snd.error();
+      if (an && S.gold >= an.cost && (S.owned[k] || 0) < an.max) { S.gold -= an.cost; S.owned[k] = (S.owned[k] || 0) + 1; Animals.add(k); Snd.buy(); if (k === 'vaca') Snd.moo(); else if (k === 'porco') Snd.oink(); else Snd.neigh(); toast('Comprou ' + an.name.toLowerCase() + ' (−' + an.cost + ' ◎) — já está no curral! 🐾', 'good'); openShop(); } else Snd.error();
     } else if (a === 'eat') {
-      if (S.gold >= 22 && S.energy < 100) { S.gold -= 22; S.energy = Math.min(100, S.energy + 40); Snd.buy(); toast('Delícia! +40 de energia', 'good'); openShop(); }
+      if (S.gold >= 22 && S.energy < 100) { const g = Math.min(40, 100 - S.energy); S.gold -= 22; S.energy += g; Snd.buy(); toast('Você comeu uma torta de maçã! Delícia! +' + Math.round(g) + ' de energia (−22 ◎)', 'good'); openShop(); }
     } else if (a === 'up') {
       const k = b.dataset.k, costs = k === 'basket' ? BASKET_COST : k === 'can' ? CAN_COST : BOOTS_COST, lvl = S.up[k] + 1;
-      if (S.gold >= costs[lvl]) { S.gold -= costs[lvl]; S.up[k] = lvl; Snd.level(); if (k === 'can') S.water = canMax(); openShop(); } else Snd.error();
+      if (S.gold >= costs[lvl]) {
+        S.gold -= costs[lvl]; S.up[k] = lvl; Snd.level(); if (k === 'can') S.water = canMax();
+        const msg = k === 'basket' ? 'Cesto de vime melhorado! Capacidade ' + BASKET_CAP[lvl]
+          : k === 'can' ? 'Regador maior! Capacidade ' + CAN_CAP[lvl] + ' (já está cheio)'
+          : 'Botas leves! Velocidade ' + Math.round(BOOTS[lvl] * 100) + '%';
+        toast(msg + ' (−' + costs[lvl] + ' ◎)', 'good'); openShop();
+      } else Snd.error();
     } else if (a === 'chars') openCharPicker();
     else if (a === 'char') { const k = b.dataset.k; if (CHARACTERS[k]) { S.char = k; setCharacter(k); buildHotbar(); Snd.pop(); toast('Agora você joga com ' + CHAR.name + '!', 'good'); save(); closeModal(); } }
     else if (a === 'save') { save(); toast('Jogo salvo!', 'good'); }
