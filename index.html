@@ -80,9 +80,18 @@
           <button id="btnNew" class="big" disabled>Novo jogo</button>
         </div>
         <div id="confirmNew" class="confirmNew hidden">
-          <span>Isso apagará o jogo salvo. Começar do zero?</span>
+          <span id="confirmMsg">Isso apagará o jogo salvo. Começar do zero?</span>
           <button id="btnYes" class="big red">Sim, apagar</button>
           <button id="btnNo" class="big alt">Cancelar</button>
+        </div>
+        <div id="saveProblem" class="saveProblem hidden" role="alert">
+          <b>⚠ Problema com o jogo salvo</b>
+          <span id="spMsg"></span>
+          <div class="spBtns">
+            <button id="btnSpRestore" class="big hidden">Restaurar cópia</button>
+            <button id="btnSpExport" class="big alt hidden">Baixar cópia (.json)</button>
+            <button id="btnSpClose" class="big alt">Entendi</button>
+          </div>
         </div>
         <div class="controls">
           <div><kbd>W A S D</kbd> / setas — mover &nbsp; <kbd>Shift</kbd> — correr</div>

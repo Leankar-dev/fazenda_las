@@ -554,22 +554,73 @@
     if (saveTimer) return;
     saveTimer = setTimeout(() => { saveTimer = 0; if (running && S) { lastSave = time; save(); } }, 800);
   }
-  function loadSave() {
-    let j = null;
-    try {
-      j = localStorage.getItem(SAVE_KEY); if (!j) return null;
-      const s = JSON.parse(j);
-      if (!s || typeof s !== 'object' || s.v !== SAVE_VERSION) throw new Error('versão de save desconhecida');   // (futuras migrações entram aqui)
-      const base = newState();
-      const r = Object.assign(base, s, { owned: Object.assign(base.owned, s.owned), seeds: Object.assign(base.seeds, s.seeds), harvest: Object.assign(base.harvest, s.harvest),
-        up: Object.assign(base.up, s.up), stat: Object.assign(base.stat, s.stat), names: Object.assign({}, s.names) });
-      if (s.laid === undefined) r.laid = r.min >= Animals.MIDDAY ? 2 : 1;      // save anterior às posturas de meio-dia: não repõe ovos ao carregar
-      return r;
-    } catch (e) {
-      try { if (j) localStorage.setItem(SAVE_KEY + '_backup', j); } catch (e2) { /* ignore */ }     // não perde o progresso em silêncio
-      return null;
+  /* Leitura do save. Nunca lança e distingue os casos:
+       { status: 'none' }                                  não existe save
+       { status: 'ok', state }                             save válido (com defaults aplicados)
+       { status: 'invalid', reason, raw, backedUp }        existe mas não dá para usar
+     reason: json (corrompido) · future (versão mais nova que o jogo) · version (sem migração conhecida) · shape (dados faltando).
+     Um save inválido NUNCA é alterado aqui: vai para uma cópia de segurança (as 3 mais recentes) e a tela inicial avisa o jogador. */
+  const BACKUP_KEY = SAVE_KEY + '_backup', MAX_BACKUPS = 3;
+  const MIGRATIONS = {};          // schema N → N+1: função pura (save → save). Vazio: só existe a versão 1.
+  function parseSave(j) {
+    let s;
+    try { s = JSON.parse(j); } catch (e) { return { status: 'invalid', reason: 'json' }; }
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return { status: 'invalid', reason: 'json' };
+    let v = s.v;
+    if (!Number.isInteger(v) || v < 1) return { status: 'invalid', reason: 'version' };
+    if (v > SAVE_VERSION) return { status: 'invalid', reason: 'future' };
+    while (v < SAVE_VERSION) {
+      try { s = MIGRATIONS[v] ? MIGRATIONS[v](s) : null; } catch (e) { s = null; }
+      if (!s || !(s.v > v)) return { status: 'invalid', reason: 'version' };
+      v = s.v;
     }
+    const base = newState();
+    const state = Object.assign(base, s, { owned: Object.assign(base.owned, s.owned), seeds: Object.assign(base.seeds, s.seeds), harvest: Object.assign(base.harvest, s.harvest),
+      up: Object.assign(base.up, s.up), stat: Object.assign(base.stat, s.stat), names: Object.assign({}, s.names) });
+    if (!Array.isArray(state.soil) || state.soil.length !== MW * MH || ![state.day, state.gold, state.min].every(Number.isFinite)) return { status: 'invalid', reason: 'shape' };
+    if (s.laid === undefined) state.laid = state.min >= Animals.MIDDAY ? 2 : 1;      // save anterior às posturas de meio-dia: não repõe ovos ao carregar
+    return { status: 'ok', state };
   }
+  function listBackups() {            // mais recentes primeiro; a chave antiga (sem data) fica por último
+    const out = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k === BACKUP_KEY || (k && k.startsWith(BACKUP_KEY + '_'))) {
+          const raw = localStorage.getItem(k);
+          out.push({ key: k, ts: k === BACKUP_KEY ? 0 : +k.slice(BACKUP_KEY.length + 1) || 0, raw, info: parseSave(raw) });
+        }
+      }
+    } catch (e) { /* storage indisponível */ }
+    return out.sort((x, y) => y.ts - x.ts);
+  }
+  function backupSave(j) {
+    try {
+      if (listBackups().some(b => b.raw === j)) return true;                    // já guardado (o boot e o "Continuar" leem duas vezes)
+      localStorage.setItem(BACKUP_KEY + '_' + Date.now(), j);
+      for (const b of listBackups().slice(MAX_BACKUPS)) localStorage.removeItem(b.key);
+      return true;
+    } catch (e) { return false; }                                               // cota cheia: o texto ainda pode ser baixado da tela inicial
+  }
+  function loadSave() {
+    let j;
+    try { j = localStorage.getItem(SAVE_KEY); } catch (e) { return { status: 'none' }; }
+    if (!j) return { status: 'none' };
+    const r = parseSave(j);
+    return r.status === 'ok' ? r : Object.assign(r, { raw: j, backedUp: backupSave(j) });
+  }
+  function restoreBackup(b) { try { localStorage.setItem(SAVE_KEY, b.raw); return true; } catch (e) { return false; } }
+  function downloadText(name, text) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' })), a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  const SAVE_PROBLEMS = {
+    json: 'O arquivo do save está corrompido e não pôde ser lido.',
+    future: 'O save é de uma versão mais nova do jogo. Atualize a página (Ctrl+F5) e tente de novo — ele não foi alterado.',
+    version: 'O save é de uma versão do jogo que este código não reconhece.',
+    shape: 'O save está incompleto (faltam dados do mapa).',
+  };
+  const backupLabel = b => { const st = b.info.state, d = b.ts ? new Date(b.ts).toLocaleDateString('pt-BR') : 'data desconhecida'; return 'Dia ' + st.day + ' · ' + fmt(st.gold) + ' ◎ · ' + d; };
 
   /* ---------------- jogador ---------------- */
   const P = { x: SPAWN.x, y: SPAWN.y, dir: 0, moving: false, walkT: 0, stepT: 0, wk: 0, idleT: 0, lastStep: 0 };
@@ -1979,7 +2030,8 @@
 
   function startGame(loadIt, charId, names) {
     Snd.init();
-    S = loadIt ? (loadSave() || newState()) : newState();
+    const loaded = loadIt ? loadSave() : null;
+    S = loaded && loaded.status === 'ok' ? loaded.state : newState();
     if (!loadIt) { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* storage indisponível */ } S.char = CHARACTERS[charId] ? charId : 'fazendeiro'; }
     if (!CHARACTERS[S.char]) S.char = 'fazendeiro';
     if (!loadIt) { S.names = {}; for (const id of CHAR_IDS) S.names[id] = cleanName(names && names[id], CHARACTERS[id].defName); }
@@ -2043,8 +2095,23 @@
       Art.init(); setCharacter('fazendeiro'); makeCloudSprites();
       $('btnMusic').textContent = Snd.musicOn ? '🎵' : '🔕'; $('btnMute').textContent = Snd.muted ? '🔇' : '🔊';
       status.classList.add('hidden');
-      const has = !!loadSave();
+      const found = loadSave(), has = found.status === 'ok', bad = found.status === 'invalid';
       if (has) $('btnContinue').classList.remove('hidden');
+      { // save ilegível ou ausente com cópia válida guardada: avisa e oferece baixar/restaurar
+        const good = found.status === 'ok' ? null : listBackups().find(b => b.info.status === 'ok');
+        if (bad || good) {
+          const sp = $('saveProblem');
+          $('spMsg').textContent = (bad ? SAVE_PROBLEMS[found.reason] + ' ' + (found.backedUp ? 'Uma cópia de segurança foi guardada neste navegador.' : 'Não foi possível guardar uma cópia neste navegador — baixe o arquivo antes de começar de novo!')
+            : 'Não há jogo salvo, mas existe uma cópia de segurança.');
+          if (bad) { $('btnSpExport').classList.remove('hidden'); $('btnSpExport').onclick = () => downloadText('fazenda-las-save-' + new Date().toISOString().slice(0, 10) + '.json', found.raw); }
+          if (good) {
+            const br = $('btnSpRestore'); br.textContent = 'Restaurar cópia (' + backupLabel(good) + ')'; br.classList.remove('hidden');
+            br.onclick = () => { if (restoreBackup(good)) location.reload(); else $('spMsg').textContent = 'Não foi possível restaurar: o navegador bloqueou o armazenamento.'; };
+          }
+          $('btnSpClose').onclick = () => sp.classList.add('hidden');
+          sp.classList.remove('hidden');
+        }
+      }
       // vitrine do título e tela de seleção
       $('titleImg1').src = CHARACTERS.fazendeiro.folder + '/front_walk.png';
       $('titleImg2').src = CHARACTERS.fazendeira.folder + '/front_walk.png';
@@ -2071,7 +2138,12 @@
       $('btnBack').onclick = () => showSelect(false);
       $('btnContinue').onclick = () => begin(true);
       // confirmação na própria tela (confirm() do navegador pode estar bloqueado e deixava o botão "morto")
-      $('btnNew').onclick = () => { if (has) $('confirmNew').classList.remove('hidden'); else showSelect(true); };
+      $('btnNew').onclick = () => {
+        if (!has && !bad) { showSelect(true); return; }
+        $('confirmMsg').textContent = has ? 'Isso apagará o jogo salvo. Começar do zero?'
+          : 'O save atual não pôde ser lido' + (found.backedUp ? ' (a cópia de segurança fica guardada).' : ' e NÃO há cópia guardada — baixe o arquivo antes!') + ' Começar do zero?';
+        $('confirmNew').classList.remove('hidden');
+      };
       $('btnYes').onclick = () => { $('confirmNew').classList.add('hidden'); showSelect(true); };
       $('btnNo').onclick = () => $('confirmNew').classList.add('hidden');
       window.addEventListener('beforeunload', () => { if (running) save(); });
