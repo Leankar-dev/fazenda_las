@@ -1058,7 +1058,7 @@
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
       ④ durma na porta do celeiro para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
       Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. Pegue os ovos das galinhas todo dia. Dias com chuva regam tudo sozinhos!</div>
-      <div class="modalBtns"><button class="mb red" data-a="reset">Novo jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="save">Salvar</button><button class="mb" data-a="close">Continuar</button></div>`);
+      <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="save">Salvar</button><button class="mb" data-a="close">Continuar</button></div>`);
   }
 
   function openCharPicker() {
@@ -1097,7 +1097,8 @@
     } else if (a === 'chars') openCharPicker();
     else if (a === 'char') { const k = b.dataset.k; if (CHARACTERS[k]) { S.char = k; setCharacter(k); buildHotbar(); Snd.pop(); toast('Agora você joga com ' + CHAR.name + '!', 'good'); save(); closeModal(); } }
     else if (a === 'save') { save(); toast('Jogo salvo!', 'good'); }
-    else if (a === 'reset') { if (confirm('Começar um novo jogo? O progresso atual será perdido.')) { localStorage.removeItem(SAVE_KEY); location.reload(); } }
+    else if (a === 'resetask') { currentModal = 'reset'; setModal(`<h2>Novo jogo</h2><p>Começar um novo jogo? O progresso atual será perdido.</p><div class="modalBtns"><button class="mb red" data-a="reset">Sim, apagar</button><button class="mb" data-a="close">Cancelar</button></div>`); }
+    else if (a === 'reset') { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ } running = false; location.reload(); }
     updateHud(true);
   });
 
@@ -1883,34 +1884,69 @@
   }
 
   async function boot() {
-    canvas = $('game'); g = canvas.getContext('2d'); g.imageSmoothingQuality = 'high';
-    resize(); window.addEventListener('resize', resize);
-    bindCanvas();
-    const load = (src, store, key) => new Promise(res => {
-      const i = new Image(); i.onload = () => { store[key] = i; res(); };
-      i.onerror = () => { console.warn('falha ao carregar', src); store[key] = Art.mk(8, 8, () => { }); res(); };
-      i.src = src;
-    });
-    const jobs = TILE_LIST.map(n => load('assets/' + n + '.png', IMGS, n));
-    for (const id of CHAR_IDS) { CHAR_IMGS[id] = {}; for (const n of SPRITE_LIST) jobs.push(load(CHARACTERS[id].folder + '/' + n + '.png', CHAR_IMGS[id], n)); }
-    jobs.push(...Animals.load(load));
-    await Promise.all(jobs);
-    Art.init(); setCharacter('fazendeiro'); makeCloudSprites();
-    $('btnMusic').textContent = Snd.musicOn ? '🎵' : '🔕'; $('btnMute').textContent = Snd.muted ? '🔇' : '🔊';
-    $('loading').remove();
-    const has = !!loadSave();
-    if (has) $('btnContinue').classList.remove('hidden');
-    // vitrine do título e tela de seleção
-    $('titleImg1').src = CHARACTERS.fazendeiro.folder + '/front_walk.png';
-    $('titleImg2').src = CHARACTERS.fazendeira.folder + '/front_walk.png';
-    $('cards').innerHTML = CHAR_IDS.map(id => cardHtml(CHARACTERS[id], false)).join('');
-    const showSelect = on => { $('charSelect').classList.toggle('hidden', !on); $('titleBox').classList.toggle('hidden', on); };
-    $('cards').addEventListener('click', e => { const b = e.target.closest('.charCard'); if (b) startGame(false, b.dataset.k); });
-    $('btnBack').onclick = () => showSelect(false);
-    $('btnContinue').onclick = () => startGame(true);
-    $('btnNew').onclick = () => { if (!has || confirm('Isso apagará o jogo salvo. Começar do zero?')) showSelect(true); };
-    window.addEventListener('beforeunload', () => { if (running) save(); });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) { if (running) { save(); if (!modalOpen) openMenu(); } Snd.suspend(); } else Snd.resume(); });
+    const status = $('loading');
+    const fail = msg => { $('loadTxt').textContent = msg; status.classList.remove('hidden'); status.classList.add('err'); };
+    try {
+      canvas = $('game'); g = canvas.getContext('2d'); g.imageSmoothingQuality = 'high';
+      resize(); window.addEventListener('resize', resize);
+      bindCanvas();
+      // carregamento de imagens com tempo limite e novas tentativas: uma imagem travada na rede
+      // não pode deixar o jogo preso em "Carregando..." para sempre
+      let total = 0, done = 0;
+      const tick = () => { $('loadTxt').textContent = 'Carregando... ' + Math.round(done / total * 100) + '%'; };
+      const load = (src, store, key) => { total++; return new Promise(res => {
+        let tries = 0;
+        const attempt = () => {
+          const i = new Image(); let over = false;
+          const end = ok => {
+            if (over) return; over = true; clearTimeout(tm);
+            if (ok) store[key] = i;
+            else if (++tries < 3) { attempt(); return; }
+            else { console.warn('falha ao carregar', src); store[key] = Art.mk(8, 8, () => { }); }
+            done++; tick(); res();
+          };
+          const tm = setTimeout(() => end(false), 15000);
+          i.onload = () => end(true); i.onerror = () => end(false);
+          i.src = tries ? src + '?r=' + tries : src;
+        };
+        attempt();
+      }); };
+      const jobs = TILE_LIST.map(n => load('assets/' + n + '.png', IMGS, n));
+      for (const id of CHAR_IDS) { CHAR_IMGS[id] = {}; for (const n of SPRITE_LIST) jobs.push(load(CHARACTERS[id].folder + '/' + n + '.png', CHAR_IMGS[id], n)); }
+      jobs.push(...Animals.load(load));
+      await Promise.all(jobs);
+      Art.init(); setCharacter('fazendeiro'); makeCloudSprites();
+      $('btnMusic').textContent = Snd.musicOn ? '🎵' : '🔕'; $('btnMute').textContent = Snd.muted ? '🔇' : '🔊';
+      status.classList.add('hidden');
+      const has = !!loadSave();
+      if (has) $('btnContinue').classList.remove('hidden');
+      // vitrine do título e tela de seleção
+      $('titleImg1').src = CHARACTERS.fazendeiro.folder + '/front_walk.png';
+      $('titleImg2').src = CHARACTERS.fazendeira.folder + '/front_walk.png';
+      $('cards').innerHTML = CHAR_IDS.map(id => cardHtml(CHARACTERS[id], false)).join('');
+      const showSelect = on => { $('charSelect').classList.toggle('hidden', !on); $('titleBox').classList.toggle('hidden', on); };
+      // mostra o indicador de progresso e só então gera o mapa (que é pesado e congela a tela por um instante)
+      const begin = (loadIt, charId) => {
+        $('busy').classList.remove('hidden');
+        requestAnimationFrame(() => setTimeout(() => {
+          try { startGame(loadIt, charId); }
+          catch (e) { console.error(e); showSelect(false); fail('Não foi possível iniciar o jogo (' + e.message + '). Recarregue a página.'); }
+          $('busy').classList.add('hidden');
+        }, 30));
+      };
+      $('cards').addEventListener('click', e => { const b = e.target.closest('.charCard'); if (b) begin(false, b.dataset.k); });
+      $('btnBack').onclick = () => showSelect(false);
+      $('btnContinue').onclick = () => begin(true);
+      // confirmação na própria tela (confirm() do navegador pode estar bloqueado e deixava o botão "morto")
+      $('btnNew').onclick = () => { if (has) $('confirmNew').classList.remove('hidden'); else showSelect(true); };
+      $('btnYes').onclick = () => { $('confirmNew').classList.add('hidden'); showSelect(true); };
+      $('btnNo').onclick = () => $('confirmNew').classList.add('hidden');
+      window.addEventListener('beforeunload', () => { if (running) save(); });
+      document.addEventListener('visibilitychange', () => { if (document.hidden) { if (running) { save(); if (!modalOpen) openMenu(); } Snd.suspend(); } else Snd.resume(); });
+      $('btnNew').disabled = false; $('btnContinue').disabled = false;
+    } catch (e) {
+      console.error(e); fail('Erro ao carregar o jogo (' + e.message + '). Recarregue a página.');
+    }
     requestAnimationFrame(frame);
   }
   boot();

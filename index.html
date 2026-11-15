@@ -75,8 +75,13 @@
           na fazenda dos seus sonhos.
         </p>
         <div class="titleBtns">
-          <button id="btnContinue" class="big hidden">Continuar</button>
-          <button id="btnNew" class="big">Novo jogo</button>
+          <button id="btnContinue" class="big hidden" disabled>Continuar</button>
+          <button id="btnNew" class="big" disabled>Novo jogo</button>
+        </div>
+        <div id="confirmNew" class="confirmNew hidden">
+          <span>Isso apagará o jogo salvo. Começar do zero?</span>
+          <button id="btnYes" class="big red">Sim, apagar</button>
+          <button id="btnNo" class="big alt">Cancelar</button>
         </div>
         <div class="controls">
           <div><kbd>W A S D</kbd> / setas — mover &nbsp; <kbd>Shift</kbd> — correr</div>
@@ -84,7 +89,7 @@
           <div><kbd>E</kbd> — interagir (loja, caixa, poço, dormir) &nbsp; <kbd>Q</kbd> — trocar semente</div>
           <div><kbd>M</kbd> — música &nbsp; <kbd>N</kbd> — efeitos sonoros &nbsp; <kbd>Esc</kbd> — pausa</div>
         </div>
-        <div id="loading">Carregando...</div>
+        <div id="loading"><i class="spin"></i><span id="loadTxt">Carregando... 0%</span></div>
       </div>
     </div>
     <div class="selectBox hidden" id="charSelect">
@@ -94,6 +99,8 @@
       <button id="btnBack" class="big alt">Voltar</button>
     </div>
   </div>
+
+  <div id="busy" class="hidden" role="status" aria-live="polite"><i class="spin big"></i><span>Preparando a fazenda...</span></div>
 
   <script src="art.js"></script>
   <script src="animais.js"></script>
