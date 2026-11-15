@@ -531,13 +531,21 @@
     return quota ? 'Sem espaço no navegador para salvar! Libere espaço (dados do site) — o progresso NÃO está sendo salvo.'
       : 'O navegador não deixou salvar (modo privado ou dados do site bloqueados) — o progresso NÃO está sendo salvo.';
   }
+  // `pt`/`pk` das plantas são só da animação de brotar/crescer (dependem de `time`, que reinicia a cada sessão): não vão para o save.
+  // Devolve uma cópia — o estado vivo mantém `pt`/`pk` até o render terminar a animação.
+  const TRANSIENT_CROP_KEYS = ['pt', 'pk'];
+  function persistentCrops(crops) {
+    const out = {};
+    for (const k in crops) { const c = Object.assign({}, crops[k]); for (const f of TRANSIENT_CROP_KEYS) delete c[f]; out[k] = c; }
+    return out;
+  }
   function save(manual) {
     if (!S) return { ok: false, error: new Error('nenhum jogo em andamento') };
     try {
       S.obs = obs.map(o => o.type === 'ftree' ? [o.type, o.x, o.y, o.v, o.hp, o.age, o.fruit, o.cd] : [o.type, o.x, o.y, o.v, o.hp]);
       S.eggList = eggs.map(e => [e.x, e.y]);
       S.px = P.x; S.py = P.y; S.dir = P.dir;
-      localStorage.setItem(SAVE_KEY, JSON.stringify(S));
+      localStorage.setItem(SAVE_KEY, JSON.stringify(Object.assign({}, S, { crops: persistentCrops(S.crops) })));
     } catch (e) {
       console.warn('falha ao salvar', e);
       saveFailing = true;
@@ -578,6 +586,7 @@
     const state = Object.assign(base, s, { owned: Object.assign(base.owned, s.owned), seeds: Object.assign(base.seeds, s.seeds), harvest: Object.assign(base.harvest, s.harvest),
       up: Object.assign(base.up, s.up), stat: Object.assign(base.stat, s.stat), names: Object.assign({}, s.names) });
     if (!Array.isArray(state.soil) || state.soil.length !== MW * MH || ![state.day, state.gold, state.min].every(Number.isFinite)) return { status: 'invalid', reason: 'shape' };
+    if (state.crops && typeof state.crops === 'object') for (const k in state.crops) for (const f of TRANSIENT_CROP_KEYS) if (state.crops[k]) delete state.crops[k][f];   // saves antigos traziam pt/pk
     if (s.laid === undefined) state.laid = state.min >= Animals.MIDDAY ? 2 : 1;      // save anterior às posturas de meio-dia: não repõe ovos ao carregar
     return { status: 'ok', state };
   }
