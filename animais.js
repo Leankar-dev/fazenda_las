@@ -54,6 +54,10 @@ const Animals = (() => {
     return jobs;
   }
   const bind = env => { E = env; };
+  // carne do porco: 2 vezes por dia (de manhã e a partir do meio-dia), uma por porco em cada janela
+  const MIDDAY = 13 * 60;
+  const meatSlots = S => S.min >= MIDDAY ? 2 : 1;
+  const meatReady = (S, a) => ((S.meatDone && S.meatDone[a.idx]) || 0) < meatSlots(S);
 
   /* ---------------- mundo ---------------- */
   function markSolid(solid, MW) {
@@ -104,12 +108,12 @@ const Animals = (() => {
     list.push(mk('cachorro', P.x - 60, P.y + 30, { dir: 3 }));
     for (let i = 0; i < (S.owned.vaca || 0); i++) { const [x, y] = freeSpot(); list.push(mk('vaca', x, y, { idx: i })); }
     for (let i = 0; i < (S.owned.porco || 0); i++) { const [x, y] = freeSpot(); list.push(mk('porco', x, y, { idx: i })); }
-    if (S.owned.cavalo) { const [x, y] = freeSpot(); horse = mk('cavalo', x, y); list.push(horse); }
+    for (let i = 0; i < (S.owned.cavalo || 0); i++) { const [x, y] = freeSpot(); const h = mk('cavalo', x, y, { idx: i }); list.push(h); if (!horse) horse = h; }
   }
   const dog = () => list.find(a => a.kind === 'cachorro');
   function add(kind) {
     const [px, py] = freeSpot(), idx = list.filter(q => q.kind === kind).length;
-    const an = mk(kind, px, py, { idx }); list.push(an); if (kind === 'cavalo') horse = an; return an;
+    const an = mk(kind, px, py, { idx }); list.push(an); if (kind === 'cavalo' && !horse) horse = an; return an;
   }
 
   function walkable(a, nx, ny, confine) {
@@ -130,10 +134,43 @@ const Animals = (() => {
   }
 
   const VEC = [[0, 1], [0, -1], [-1, 0], [1, 0]];     // baixo, cima, esquerda, direita
+  const FOLLOW_TIME = 50;                             // segundos que o cachorro acompanha depois de chamado
+  // o cachorro passeia sozinho pela fazenda; quando chamado, vem correndo e fica com o jogador por um tempo
+  function callDog() {
+    const a = dog(); if (!a) return false;
+    a.follow = FOLLOW_TIME; a.go = false; a.stuck = 0; a.hop = .25; a.lastBark = E.time();
+    return true;
+  }
+  const dogFollowing = () => { const a = dog(); return !!a && a.follow > 0; };
+  function dogRoam(a, dt) {
+    if (a.go) {
+      const dx = a.tx - a.x, dy = a.ty - a.y, d = Math.hypot(dx, dy);
+      if (d < 8) { a.go = false; a.wait = rnd(2, 6); a.idle = 0; return; }
+      const mv = move(a, dx / d * 62 * dt, dy / d * 62 * dt, false);
+      faceVec(a, dx, dy); a.moving = mv > .05;
+      if (mv < .05) { a.stuck += dt; if (a.stuck > .5) { a.go = false; a.wait = rnd(.3, 1.2); a.stuck = 0; } } else a.stuck = 0;
+      return;
+    }
+    a.idle += dt; a.wait -= dt;
+    if (a.wait > 0) return;
+    for (let i = 0; i < 12; i++) {                      // escolhe um canto próximo da fazenda, em terreno livre
+      const tx = clamp(a.x + rnd(-420, 420), 2 * TS, (E.MW - 2) * TS), ty = clamp(a.y + rnd(-320, 320), 8 * TS, (E.MH - 2) * TS);
+      const tx0 = Math.floor(tx / TS), ty0 = Math.floor(ty / TS);
+      if (E.blocked(tx0, ty0) || E.isWater(tx0, ty0)) continue;
+      a.tx = tx; a.ty = ty; a.go = true; a.idle = 0; a.stuck = 0; return;
+    }
+    a.wait = rnd(1, 3);
+  }
   function dogAI(a, dt) {
     const P = E.P, dp = Math.hypot(P.x - a.x, P.y - a.y);
     a.moving = false;
-    if (dp > 950) { a.x = P.x - VEC[P.dir][0] * 60; a.y = P.y - VEC[P.dir][1] * 40 + 24; a.stuck = 0; return; }
+    if (!(a.follow > 0)) {                              // passeando sozinho
+      dogRoam(a, dt);
+      if (!a.go && a.idle > 4 && Math.random() < dt * .05 && E.time() - a.lastBark > 12 && dp < 700) { a.lastBark = E.time(); E.Snd.bark(); a.hop = .25; }
+      return;
+    }
+    a.follow -= dt;
+    if (dp > 1500) { a.x = P.x - VEC[P.dir][0] * 60; a.y = P.y - VEC[P.dir][1] * 40 + 24; a.stuck = 0; return; }
     // segue por TRÁS do jogador (nunca no tile à frente, onde as ferramentas atuam)
     const bx = P.x - VEC[P.dir][0] * 70, by = P.y + 6 - VEC[P.dir][1] * 54;
     const dx = bx - a.x, dy = by - a.y, d = Math.hypot(dx, dy);
@@ -204,16 +241,17 @@ const Animals = (() => {
     for (const a of list) if (near(a, cx, cy)) {
       let d = Math.hypot(a.x - cx, a.y - cy);
       if (a.kind === 'vaca' && S.milked && S.milked[a.idx]) d += 500;      // prefere uma vaca que ainda dá leite
+      if (a.kind === 'porco' && !meatReady(S, a)) d += 500;                 // e um porco que ainda tem carne
       if (d < bd) { bd = d; best = a; }
     }
     if (!best) return null;
     if (best.kind === 'cachorro') return { type: 'cachorro', label: 'E — Fazer carinho', ref: best };
-    if (best.kind === 'porco') return { type: 'porco', label: 'E — Fazer carinho', ref: best };
+    if (best.kind === 'porco') return { type: 'porco', label: meatReady(S, best) ? 'E — Pegar carne' : 'E — Fazer carinho', ref: best, ready: meatReady(S, best) };
     if (best.kind === 'cavalo') return { type: 'cavalo', label: 'E — Montar', ref: best };
     if (best.kind === 'vaca') return { type: 'vaca', label: S.milked && S.milked[best.idx] ? 'Já ordenhada hoje' : 'E — Ordenhar', ref: best };
     return null;
   }
-  function mount() { if (!horse) return false; riding = true; return true; }
+  function mount(a) { if (a && a.kind === 'cavalo') horse = a; if (!horse) return false; riding = true; return true; }
   function dismount() {
     if (!riding) return;
     riding = false; horse.moving = false;
@@ -269,6 +307,15 @@ const Animals = (() => {
       g.beginPath(); g.arc(a.x, y, 15, 0, TAU); g.fill(); g.stroke();
       g.beginPath(); g.moveTo(a.x - 4, y + 13); g.lineTo(a.x, y + 20); g.lineTo(a.x + 4, y + 13); g.fill();
       if (b) g.drawImage(b, a.x - 10, y - 11, 20, 20 * b.height / b.width);
+      g.restore();
+    }
+    // porco com carne pronta: balão com presunto
+    if (a.kind === 'porco' && meatReady(S, a) && S.min < 18 * 60 && E.icons && E.icons.meat) {
+      const y = a.y - K.h - 12 + Math.sin(a.t * 3 + 1) * 2;
+      g.save(); g.fillStyle = 'rgba(255,255,255,.92)'; g.strokeStyle = '#6b4a2a'; g.lineWidth = 2;
+      g.beginPath(); g.arc(a.x, y, 15, 0, TAU); g.fill(); g.stroke();
+      g.beginPath(); g.moveTo(a.x - 4, y + 13); g.lineTo(a.x, y + 20); g.lineTo(a.x + 4, y + 13); g.fill();
+      g.drawImage(E.icons.meat, a.x - 12, y - 12, 24, 24);
       g.restore();
     }
   }
@@ -354,7 +401,7 @@ const Animals = (() => {
   return {
     AREA, IN, GATE, DECOR, IMGS, KINDS, inArea, inIn, isGate, isFence,
     load, bind, markSolid, drawGround, spawn, update, at, collect, drawMounted,
-    mount, dismount, isRiding, resetMorning, cows, pigs, dog, freeSpot, add,
+    mount, dismount, isRiding, resetMorning, cows, pigs, dog, freeSpot, add, callDog, dogFollowing, meatReady, MIDDAY,
     get horse() { return horse; },
     get list() { return list; },
   };

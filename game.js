@@ -80,11 +80,12 @@
   const BASKET_CAP = [20, 40, 80], BASKET_COST = [0, 150, 400];
   const CAN_CAP = [15, 30, 50], CAN_COST = [0, 120, 350];
   const BOOTS = [1, 1.18, 1.36], BOOTS_COST = [0, 220, 520];
-  const EGG_PRICE = 28, STONE_PRICE = 9, WOOD_PRICE = 10, MILK_PRICE = 42, TRUFFLE_PRICE = 80;
+  const EGG_PRICE = 28, STONE_PRICE = 9, WOOD_PRICE = 10, MILK_PRICE = 42, TRUFFLE_PRICE = 80, MEAT_PRICE = 55;
+  const N_CHICKENS = 6;                                  // galinhas no galinheiro (botam ovos 2× por dia)
   const ANIMAL_SHOP = {
-    vaca:   { name: 'Vaca',   cost: 260, max: 2, img: 'assets/animais/vaca/front34.png',   info: 'Dá leite todo dia (vende 42 ◎). Ordenhe com E.' },
-    porco:  { name: 'Porco',  cost: 180, max: 2, img: 'assets/animais/porco/front34.png',  info: 'Acha trufas todo dia (vendem 80 ◎).' },
-    cavalo: { name: 'Cavalo', cost: 650, max: 1, img: 'assets/animais/cavalo/front34.png', info: 'Monte com E e cavalgue quase 2× mais rápido.' },
+    vaca:   { name: 'Vaca',   cost: 260, max: 4, img: 'assets/animais/vaca/front34.png',   info: 'Dá leite todo dia (vende 42 ◎). Ordenhe com E.' },
+    porco:  { name: 'Porco',  cost: 180, max: 4, img: 'assets/animais/porco/front34.png',  info: 'Dá carne 2× por dia (vende 55 ◎) e acha trufas (80 ◎). Pegue com E.' },
+    cavalo: { name: 'Cavalo', cost: 650, max: 2, img: 'assets/animais/cavalo/front34.png', info: 'Monte com E e cavalgue quase 2× mais rápido.' },
   };
   const GOALS = [
     { at: 400,   reward: { seeds: { tomate: 6 } },  text: 'Sementes de tomate liberadas! (+6)' },
@@ -144,8 +145,8 @@
       v: 1, day: 1, min: DAY_START, gold: 100, earned: 0, energy: 100, water: 15,
       seeds: { cenoura: 8, tomate: 0, milho: 0, abobora: 0, maca: 0, laranja: 0, pessego: 0, limao: 0 },
       harvest: { cenoura: 0, tomate: 0, milho: 0, abobora: 0, maca: 0, laranja: 0, pessego: 0, limao: 0 },
-      eggs: 0, stone: 0, wood: 0, milk: 0, truffle: 0,
-      owned: { vaca: 0, porco: 0, cavalo: 0 }, milked: [], digs: [], truffleList: [],
+      eggs: 0, stone: 0, wood: 0, milk: 0, truffle: 0, meat: 0, laid: 1,
+      owned: { vaca: 0, porco: 0, cavalo: 0 }, milked: [], meatDone: [], digs: [], truffleList: [],
       up: { basket: 0, can: 0, boots: 0 },
       char: 'fazendeiro', selSeed: 'cenoura', tool: 0, dir: 0, px: SPAWN.x, py: SPAWN.y,
       rain: false, soil: new Array(MW * MH).fill(0), crops: {}, obs: [], eggList: [], names: {},
@@ -562,6 +563,7 @@
   function readyAt(tx, ty) {
     const it = interactAt(tx, ty); if (!it) return false;
     if (it.type === 'vaca') return !S.milked[it.ref.idx];
+    if (it.type === 'porco') return !!it.ready;
     if (it.type === 'ftree') { const o = obsAt(tx, ty); return !!o && treeStage(o) === 2 && !!o.fruit; }
     return it.type === 'crop' || it.type === 'truffle' || it.type === 'dig' || it.type === 'egg';
   }
@@ -644,6 +646,7 @@
     }
     const an = Animals.at(tx, ty, S);
     if (an && an.type === 'vaca') return S.milked[an.ref.idx] ? { ok: false, msg: 'Essa vaca já foi ordenhada hoje. Volte amanhã!' } : { ok: true, k: 'milk' };
+    if (an && an.type === 'porco' && an.ready) return { ok: true, k: 'meat' };       // sem carne: cai no carinho (E)
     return null;
   }
 
@@ -683,7 +686,7 @@
     }
     return { ok: false };
   }
-  const COST = { weed: 1, till: 2.5, water: .7, plant: .4, plantTree: 1, harvest: .6, mine: 4, chop: 5, pickTree: .6, milk: .8, refill: 0 };
+  const COST = { weed: 1, till: 2.5, water: .7, plant: .4, plantTree: 1, harvest: .6, mine: 4, chop: 5, pickTree: .6, milk: .8, meat: .8, refill: 0 };
 
   function useTool(tx, ty, fromMouse, auto) {
     if (act || modalOpen || paused) return;
@@ -696,16 +699,19 @@
       if (it) interact(tx, ty); else { toast('Desmonte (E) para usar as ferramentas', 'bad'); Snd.error(); }
       return;
     }
-    const toolOwns = (id === 'machado' && it && it.type === 'ftree') || (id === 'luvas' && it && (it.type === 'ftree' || it.type === 'vaca'));   // a ferramenta age em vez do atalho (E)
+    const toolOwns = (id === 'machado' && it && it.type === 'ftree') || (id === 'luvas' && it && (it.type === 'ftree' || it.type === 'vaca' || (it.type === 'porco' && it.ready)));   // a ferramenta age em vez do atalho (E)
     if (auto && it && it.type !== 'crop' && it.type !== 'egg' && !toolOwns) return;
     if (it && it.type !== 'crop' && it.type !== 'egg' && !toolOwns && !(id === 'regador' && (it.type === 'water' || it.type === 'well'))) { interact(tx, ty); return; }
     const chk = toolCheck(tx, ty);
     if (!chk.ok) { if (chk.msg) { toast(chk.msg, 'bad'); Snd.error(); } else if (it) interact(tx, ty); return; }
     if (S.energy < COST[chk.k]) { toast('Sem energia! Coma um lanche na loja ou vá dormir.', 'bad'); Snd.error(); return; }
-    const dur = id === 'picareta' ? .42 : id === 'machado' ? .45 : id === 'forcado' ? .4 : id === 'regador' ? .45 : chk.k === 'milk' ? .85 : chk.k === 'pickTree' ? .5 : .3;
+    const dur = id === 'picareta' ? .42 : id === 'machado' ? .45 : id === 'forcado' ? .4 : id === 'regador' ? .45 : chk.k === 'milk' || chk.k === 'meat' ? .85 : chk.k === 'pickTree' ? .5 : .3;
     act = { tool: id, k: chk.k, tx, ty, t: 0, dur, applied: false, lock: true };
     if (chk.k === 'milk') {                       // a vaca fica parada durante a ordenha
       const an = Animals.at(tx, ty, S); if (an && an.ref) { an.ref.moving = false; an.ref.wait = 4; act.cow = an.ref; }
+    }
+    if (chk.k === 'meat') {                       // o porco fica parado enquanto você pega a carne
+      const an = Animals.at(tx, ty, S); if (an && an.ref) { an.ref.moving = false; an.ref.wait = 4; act.pig = an.ref; }
     }
   }
 
@@ -741,6 +747,7 @@
       case 'harvest': harvestAt(tx, ty); break;
       case 'pickTree': { const o = obsAt(tx, ty); if (o && o.type === 'ftree' && treeStage(o) === 2 && o.fruit) harvestTree(o); break; }
       case 'milk': { const cow = a.cow || (Animals.at(tx, ty, S) || {}).ref; if (cow) milkCow(cow); break; }
+      case 'meat': { const pig = a.pig || (Animals.at(tx, ty, S) || {}).ref; if (pig) takeMeat(pig); break; }
       case 'plantTree': {
         const k = S.selSeed, o = addObs('ftree', tx, ty, TREE_KEYS.indexOf(k), 6, 0, 0, 0); o.pt = time;
         S.seeds[k]--; S.stat.plant++; Snd.plant();
@@ -826,7 +833,7 @@
       case 'well': case 'water':
         if (S.water >= canMax()) toast('O regador já está cheio.'); else { Snd.water(); S.water = canMax(); burst((tx + .5) * TS, (ty + .5) * TS, 16, ['#8fd8ff', '#bfe9ff', '#fff'], { min: 30, max: 100, up: 120 }); toast('Regador cheio! (' + S.water + ')', 'good'); }
         break;
-      case 'coop': toast('As galinhas botam ovos toda manhã. Pegue-os e venda!'); break;
+      case 'coop': toast('As galinhas botam ovos 2× por dia: ao amanhecer e ao meio-dia. Pegue-os e venda!'); break;
       case 'crop': {
         const chk = { ok: basketUsed() < basketCap() };
         if (!chk.ok) { toast('Cesto cheio — venda na caixa de vendas', 'bad'); Snd.error(); }
@@ -836,13 +843,14 @@
       case 'egg': pickEggAt(tx, ty); break;
       case 'cachorro': case 'porco': {
         const a = it.ref; if (!a) break;
+        if (it.type === 'porco' && it.ready) { takeMeat(a); break; }
         a.love = 1.6; a.hop = .25; if (a.kind === 'cachorro') Snd.bark(); else Snd.oink();
         for (let i = 0; i < 3; i++) setTimeout(() => heart(a.x + rnd(-12, 12), a.y - 36), i * 120);
         floatText(a.x, a.y - 52, a.kind === 'cachorro' ? 'Au au! 💕' : 'Oinc! 💕', '#ffd0dc'); break;
       }
       case 'vaca': milkCow(it.ref); break;
       case 'cavalo': {
-        const a = it.ref; if (!Animals.mount()) break;
+        const a = it.ref; if (!Animals.mount(a)) break;
         if (!boxBlocked(a.x, a.y)) { P.x = a.x; P.y = a.y; }
         P.hop = .3; Snd.neigh(); toast('Montou! Cavalgue mais rápido. Pressione E para desmontar.', 'good'); break;
       }
@@ -869,6 +877,13 @@
     Snd.moo(); Snd.harvest();
     burst(a.x - 6, a.y - 14, 12, ['#ffffff', '#f4f8ff', '#dbe9ff'], { min: 25, max: 80, up: 60, r0: 1.8, r1: 3.4, life: 1 });
     floatText(a.x, a.y - 78, '+1 leite', '#ffffff'); fly(a.x, a.y - 30, ICONS_CANVAS.milk); bump($('bag'));
+  }
+  function takeMeat(a) {
+    if (!Animals.meatReady(S, a)) { toast('Esse porco já deu carne agora. Volte ' + (S.min < Animals.MIDDAY ? 'à tarde (13:00)' : 'amanhã') + '!'); return; }
+    S.meatDone[a.idx] = (S.meatDone[a.idx] || 0) + 1; S.meat++; S.stat.harvest++; a.hop = .25; a.moving = false; a.wait = Math.max(a.wait, 2.5);
+    Snd.oink(); Snd.harvest();
+    burst(a.x, a.y - 16, 12, ['#ffb0b8', '#ff8f9c', '#fff0f0'], { min: 25, max: 80, up: 60, r0: 1.8, r1: 3.4, life: 1 });
+    floatText(a.x, a.y - 60, '+1 carne', '#ffd0d6'); fly(a.x, a.y - 24, ICONS_CANVAS.meat); bump($('bag'));
   }
   function heart(x, y) { parts.push({ k: 'heart', x, y, vx: rnd(-10, 10), vy: -42, g: 0, life: 0, max: 1.1, r: rnd(5, 8), c: pick(['#ff6b8b', '#ff8fa8', '#ffb0c4']) }); }
   function takeTruffle(t) {
@@ -899,10 +914,10 @@
   function sellAll() {
     let total = 0, n = 0;
     for (const k of PROD_KEYS) { total += S.harvest[k] * prodSell(k); n += S.harvest[k]; }
-    total += S.eggs * EGG_PRICE + S.stone * STONE_PRICE + S.wood * WOOD_PRICE + S.milk * MILK_PRICE + S.truffle * TRUFFLE_PRICE;
-    n += S.eggs + S.stone + S.wood + S.milk + S.truffle;
+    total += S.eggs * EGG_PRICE + S.stone * STONE_PRICE + S.wood * WOOD_PRICE + S.milk * MILK_PRICE + S.truffle * TRUFFLE_PRICE + S.meat * MEAT_PRICE;
+    n += S.eggs + S.stone + S.wood + S.milk + S.truffle + S.meat;
     if (!n) { toast('Nada para vender. Colha algo primeiro!', 'bad'); Snd.error(); return; }
-    PROD_KEYS.forEach(k => S.harvest[k] = 0); S.eggs = S.stone = S.wood = S.milk = S.truffle = 0;
+    PROD_KEYS.forEach(k => S.harvest[k] = 0); S.eggs = S.stone = S.wood = S.milk = S.truffle = S.meat = 0;
     S.gold += total; S.earned += total; S.stat.sold += n;
     Snd.coin(); toast('Vendeu ' + n + ' itens por ' + fmt(total) + ' ◎', 'gold');
     const cx = (BIN.x + 1) * TS, cy = BIN.y * TS - 20;
@@ -919,6 +934,18 @@
       Snd.level(); toast('🏆 Meta de ' + fmt(gl.at) + ' ◎ atingida! ' + gl.text, 'gold');
       if (S.goal === GOALS.length && !S.won) { S.won = true; setTimeout(showWin, 1200); }
     }
+  }
+
+  // postura das galinhas (2× por dia: ao amanhecer e ao meio-dia); devolve quantos ovos apareceram
+  function layEggs() {
+    let n = 0;
+    for (const ch of chickens) if (Math.random() < .8) {
+      for (let tries = 0; tries < 16; tries++) {
+        const tx = COOP.x + Math.floor(rnd(-2, 5)), ty = COOP.y + Math.floor(rnd(-1, 5));
+        if (!blocked(tx, ty) && !isWater(tx, ty) && !eggs.some(e => Math.floor(e.x / TS) === tx && Math.floor(e.y / TS) === ty)) { eggs.push({ x: (tx + .5) * TS + rnd(-10, 10), y: (ty + .6) * TS }); n++; break; }
+      }
+    }
+    return n;
   }
 
   /* ---------------- dia / sono ---------------- */
@@ -938,16 +965,10 @@
     if (!passedOut) S.energy = 100;
     S.rain = S.day > 2 && Math.random() < .24;
     if (S.rain) { for (let i = 0; i < S.soil.length; i++) if (S.soil[i] > 0) S.soil[i] = 2; S.water = canMax(); }
-    // ovos
-    eggs.length = 0;
-    for (const ch of chickens) if (Math.random() < .8) {
-      for (let tries = 0; tries < 12; tries++) {
-        const tx = COOP.x + Math.floor(rnd(-2, 5)), ty = COOP.y + Math.floor(rnd(-1, 5));
-        if (!blocked(tx, ty) && !isWater(tx, ty) && !eggs.some(e => Math.floor(e.x / TS) === tx && Math.floor(e.y / TS) === ty)) { eggs.push({ x: (tx + .5) * TS + rnd(-10, 10), y: (ty + .6) * TS }); break; }
-      }
-    }
-    // animais: ordenha renovada, trufas e tesouro do cachorro
-    Animals.resetMorning(); S.milked = []; S.truffleList = [];
+    // ovos: 1ª postura da manhã (a 2ª vem ao meio-dia, em update)
+    eggs.length = 0; layEggs(); S.laid = 1;
+    // animais: ordenha e carne renovadas, trufas e tesouro do cachorro
+    Animals.resetMorning(); S.milked = []; S.meatDone = []; S.truffleList = [];
     for (const pg of Animals.pigs()) if (Math.random() < .75) {
       for (let tries = 0; tries < 10; tries++) {
         const tx = Math.floor(rnd(Animals.IN.x0 + 1, Animals.IN.x1)), ty = Math.floor(rnd(Animals.IN.y0 + 1, Animals.IN.y1));
@@ -1058,12 +1079,12 @@
     setModal(`<h2>☰ Pausa</h2>
       <div class="help"><b>Mover:</b> <kbd>W A S D</kbd> ou setas &nbsp; <b>Correr:</b> <kbd>Shift</kbd><br>
       <b>Ferramentas:</b> <kbd>1</kbd> Forcado · <kbd>2</kbd> Regador · <kbd>3</kbd> Sementes · <kbd>4</kbd> Luvas · <kbd>5</kbd> Picareta · <kbd>6</kbd> Machado (ou roda do mouse)<br>
-      <b>Usar:</b> <kbd>Espaço</kbd> ou clique no terreno próximo &nbsp; <b>Interagir:</b> <kbd>E</kbd> &nbsp; <b>Trocar semente:</b> <kbd>Q</kbd><br>
+      <b>Usar:</b> <kbd>Espaço</kbd> ou clique no terreno próximo &nbsp; <b>Interagir:</b> <kbd>E</kbd> &nbsp; <b>Trocar semente:</b> <kbd>Q</kbd> &nbsp; <b>Chamar o cachorro:</b> <kbd>C</kbd><br>
       <b>Música:</b> <kbd>M</kbd> &nbsp; <b>Efeitos:</b> <kbd>N</kbd> &nbsp; <b>Pausa:</b> <kbd>Esc</kbd></div>
       <h3>Como jogar</h3>
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
       ④ durma na porta do celeiro para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
-      Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. Pegue os ovos das galinhas todo dia. Dias com chuva regam tudo sozinhos!</div>
+      Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. As galinhas botam ovos 2× por dia (manhã e meio-dia) e os porcos dão carne 2× por dia. Dias com chuva regam tudo sozinhos!</div>
       <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb" data-a="close">Continuar</button></div>`);
   }
 
@@ -1177,6 +1198,7 @@
     for (const k of PROD_KEYS) if (S.harvest[k]) items.push([ICONS[k], prodName(k), S.harvest[k]]);
     if (S.eggs) items.push([ICONS.egg, 'Ovos', S.eggs]);
     if (S.milk) items.push([ICONS.milk, 'Leite', S.milk]);
+    if (S.meat) items.push([ICONS.meat, 'Carne', S.meat]);
     if (S.truffle) items.push([ICONS.truffle, 'Trufas', S.truffle]);
     if (S.stone) items.push([ICONS.stone, 'Pedras', S.stone]);
     if (S.wood) items.push([ICONS.wood, 'Madeira', S.wood]);
@@ -1231,6 +1253,7 @@
     if (e.repeat && k !== ' ') return;
     if (k >= '1' && k <= '6') selectTool(+k - 1);
     else if (k === 'q' || k === 'tab') cycleSeed(e.shiftKey ? -1 : 1);
+    else if (k === 'c') callDog();
     else if (k === 'm') toggleMusic();
     else if (k === 'n') toggleSfx();
     else if (k === 'e') { const [tx, ty] = targetTile(); if (mouseMode) faceTo(tx, ty); interact(tx, ty); }
@@ -1271,6 +1294,14 @@
     tb('tbUse', () => { mouseMode = false; const [tx, ty] = facingTile(); interact(tx, ty); });
     tb('tbTool', () => selectTool((S.tool + 1) % TOOLS.length));
     tb('tbSeed', () => cycleSeed(1));
+    tb('tbDog', () => callDog());
+  }
+  // assobia para o cachorro: ele larga o passeio, vem correndo e acompanha você por um tempo
+  function callDog() {
+    const was = Animals.dogFollowing();
+    if (!Animals.callDog()) return;
+    Snd.bark(); floatText(P.x, P.y - 96, 'Vem cá! 🐕', '#fff3c0');
+    toast(was ? 'O cachorro continua com você. 🐕' : 'Você chamou o cachorro! Ele está vindo. 🐕', 'good');
   }
   function toggleMusic() { Snd.init(); const off = Snd.toggleMusic(); $('btnMusic').textContent = off ? '🔕' : '🎵'; toast(off ? 'Música desligada' : 'Música ligada 🎵'); }
   function toggleSfx() { Snd.init(); const off = Snd.toggle(); $('btnMute').textContent = off ? '🔇' : '🔊'; toast(off ? 'Efeitos sonoros desligados' : 'Efeitos sonoros ligados'); }
@@ -1281,7 +1312,7 @@
   /* ---------------- galinhas ---------------- */
   function spawnChickens() {
     chickens = [];
-    for (let i = 0; i < 3; i++) chickens.push({ x: (COOP.x + 1 + i * .7) * TS, y: (COOP.y + 2.6 + (i % 2) * .5) * TS, tx: 0, ty: 0, dir: i % 2 ? 1 : -1, wait: rnd(0, 2), moving: false, peck: 0, off: rnd(0, 9) });
+    for (let i = 0; i < N_CHICKENS; i++) chickens.push({ x: (COOP.x + .6 + i * .75) * TS, y: (COOP.y + 2.6 + (i % 2) * .6) * TS, tx: 0, ty: 0, dir: i % 2 ? 1 : -1, wait: rnd(0, 2), moving: false, peck: 0, off: rnd(0, 9) });
   }
   function updateChickens(dt) {
     for (const c of chickens) {
@@ -1333,6 +1364,10 @@
       if (act && act.tool === 'regador' && act.t > act.dur * .3 && act.k === 'water' && Math.random() < .6) {
         const cx = (act.tx + .5) * TS, cy = (act.ty + .5) * TS;
         parts.push({ k: 'dot', x: P.x + DX[P.dir] * 22, y: P.y - 34, vx: DX[P.dir] * 60 + rnd(-10, 10), vy: rnd(-10, 20), g: 500, life: 0, max: .35, r: 2.2, c: '#9fdcff' });
+      }
+      if (S.laid < 2 && S.min >= Animals.MIDDAY) {          // 2ª postura do dia
+        S.laid = 2;
+        if (layEggs()) { Snd.cluck(); toast('🥚 As galinhas botaram mais ovos! Pegue-os no galinheiro.', 'good'); }
       }
       updateChickens(dt);
       Animals.update(dt, S);
@@ -1846,6 +1881,15 @@
       gg.fillStyle = 'rgba(255,230,190,.25)'; for (const [x, y] of [[18, 20], [28, 18], [26, 28], [17, 31], [31, 27]]) { gg.beginPath(); gg.arc(x, y, 2, 0, 7); gg.fill(); }
     };
     ICONS.truffle = mkc(trufa).toDataURL(); ICONS_CANVAS.truffle = mkc(trufa);
+    const carne = gg => {                       // presunto: pedaço rosado com osso
+      gg.fillStyle = '#f4ead6'; gg.strokeStyle = '#c9b88e'; gg.lineWidth = 1.5;
+      gg.fillRect(32, 30, 11, 5); gg.beginPath(); gg.arc(43, 29, 3.4, 0, 7); gg.arc(43, 36, 3.4, 0, 7); gg.fill(); gg.stroke();
+      const gr = gg.createRadialGradient(18, 18, 3, 22, 24, 20); gr.addColorStop(0, '#f6a0a6'); gr.addColorStop(.6, '#d9566a'); gr.addColorStop(1, '#9c2a3e');
+      gg.fillStyle = gr; gg.beginPath(); gg.ellipse(22, 25, 17, 14, -.5, 0, 7); gg.fill();
+      gg.strokeStyle = '#7a1e30'; gg.lineWidth = 2; gg.stroke();
+      gg.strokeStyle = 'rgba(255,225,225,.55)'; gg.lineWidth = 2; gg.beginPath(); gg.arc(22, 25, 8, 3.6, 5.2); gg.stroke();
+    };
+    ICONS.meat = mkc(carne).toDataURL(); ICONS_CANVAS.meat = mkc(carne);
     for (const k of TREE_KEYS) {
       ICONS[k] = Art.fruitIcons[k].toDataURL(); ICONS_CANVAS[k] = Art.fruitIcons[k];
       ICONS[k + '_sapling'] = Art.saplingIcons[k].toDataURL(); ICONS[k + '_seed'] = ICONS[k + '_sapling'];
@@ -1898,7 +1942,7 @@
     for (const o of [...obs]) if (solid[idx(o.x, o.y)]) removeObs(o);
     buildGround();
     spawnChickens();
-    Animals.bind({ P, blocked, isWater, boxBlocked, shadow: Art.shadow, Snd, heart, takeTruffle, time: () => time });
+    Animals.bind({ P, blocked, isWater, boxBlocked, shadow: Art.shadow, Snd, heart, takeTruffle, time: () => time, MW, MH, icons: ICONS_CANVAS });
     Animals.spawn(S);
     eggs = (S.eggList || []).map(e => ({ x: e[0], y: e[1] }));
     P.x = S.px; P.y = S.py; P.dir = S.dir || 0;
