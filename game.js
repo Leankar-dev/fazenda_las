@@ -547,6 +547,13 @@
     if (saveFailing) { saveFailing = false; toast('Salvamento restabelecido ✓', 'good'); }
     return { ok: true };
   }
+  // Salva logo depois de um evento importante (compra, venda, plantio). Agrupa rajadas (ex.: plantar segurando Espaço,
+  // comprar várias vezes) num único save ~0,8 s depois. Roda mesmo com o jogo pausado (a loja pausa o jogo).
+  let saveTimer = 0;
+  function requestSave() {
+    if (saveTimer) return;
+    saveTimer = setTimeout(() => { saveTimer = 0; if (running && S) { lastSave = time; save(); } }, 800);
+  }
   function loadSave() {
     let j = null;
     try {
@@ -768,7 +775,7 @@
         toast('Regador cheio! (' + S.water + ')', 'good');
         break;
       case 'plant':
-        S.crops[tx + ',' + ty] = { t: S.selSeed, age: 0, pt: time, pk: 'new' }; S.seeds[S.selSeed]--; S.stat.plant++; Snd.plant();
+        S.crops[tx + ',' + ty] = { t: S.selSeed, age: 0, pt: time, pk: 'new' }; S.seeds[S.selSeed]--; S.stat.plant++; Snd.plant(); requestSave();
         burst(cx, cy, 8, ['#e9d27a', '#d9c28f', '#8a6038'], { min: 20, max: 70, up: 60, r0: 1.4, r1: 2.6 });
         break;
       case 'harvest': harvestAt(tx, ty); break;
@@ -777,7 +784,7 @@
       case 'meat': { const pig = a.pig || (Animals.at(tx, ty, S) || {}).ref; if (pig) takeMeat(pig); break; }
       case 'plantTree': {
         const k = S.selSeed, o = addObs('ftree', tx, ty, TREE_KEYS.indexOf(k), 6, 0, 0, 0); o.pt = time;
-        S.seeds[k]--; S.stat.plant++; Snd.plant();
+        S.seeds[k]--; S.stat.plant++; Snd.plant(); requestSave();
         burst(cx, cy, 10, ['#6e4a2a', '#8a6038', '#5fae3a'], { min: 20, max: 80, up: 70, r0: 1.5, r1: 3 });
         break;
       }
@@ -952,7 +959,7 @@
     const cx = (BIN.x + 1) * TS, cy = BIN.y * TS - 20;
     floatText(cx, cy, '+' + fmt(total) + ' ◎', '#ffe680');
     burst(cx, cy + 10, 18, ['#ffe680', '#ffd24d', '#fff3b0'], { kind: 'spark', min: 40, max: 140, up: 160, r0: 2, r1: 4 });
-    checkGoals();
+    checkGoals(); requestSave();
   }
 
   function checkGoals() {
@@ -1155,15 +1162,15 @@
     else if (a === 'sleep') { closeModal(); sleepSequence(false); }
     else if (a === 'buy') {
       const k = b.dataset.k, n = +b.dataset.n, c = CROPS[k]; const cost = c.seed * n;
-      if (S.gold >= cost) { S.gold -= cost; S.seeds[k] += n; Snd.buy(); if (S.seeds[k] === n) { S.selSeed = k; } toast('Comprou ' + n + (n > 1 ? ' sementes' : ' semente') + ' de ' + c.name.toLowerCase() + ' (−' + cost + ' ◎)', 'good'); openShop(); } else Snd.error();
+      if (S.gold >= cost) { S.gold -= cost; S.seeds[k] += n; Snd.buy(); if (S.seeds[k] === n) { S.selSeed = k; } toast('Comprou ' + n + (n > 1 ? ' sementes' : ' semente') + ' de ' + c.name.toLowerCase() + ' (−' + cost + ' ◎)', 'good'); requestSave(); openShop(); } else Snd.error();
     } else if (a === 'buytree') {
       const k = b.dataset.k, t = TREE_SP[k];
-      if (t && S.gold >= t.cost) { S.gold -= t.cost; S.seeds[k]++; if (S.seeds[k] === 1) S.selSeed = k; Snd.buy(); toast('Comprou uma muda de ' + t.name.toLowerCase() + ' (−' + t.cost + ' ◎). Plante com a ferramenta 3!', 'good'); openShop(); } else Snd.error();
+      if (t && S.gold >= t.cost) { S.gold -= t.cost; S.seeds[k]++; if (S.seeds[k] === 1) S.selSeed = k; Snd.buy(); toast('Comprou uma muda de ' + t.name.toLowerCase() + ' (−' + t.cost + ' ◎). Plante com a ferramenta 3!', 'good'); requestSave(); openShop(); } else Snd.error();
     } else if (a === 'animal') {
       const k = b.dataset.k, an = ANIMAL_SHOP[k];
-      if (an && S.gold >= an.cost && (S.owned[k] || 0) < an.max) { S.gold -= an.cost; S.owned[k] = (S.owned[k] || 0) + 1; Animals.add(k); Snd.buy(); if (k === 'vaca') Snd.moo(); else if (k === 'porco') Snd.oink(); else Snd.neigh(); toast('Comprou ' + an.name.toLowerCase() + ' (−' + an.cost + ' ◎) — já está no curral! 🐾', 'good'); openShop(); } else Snd.error();
+      if (an && S.gold >= an.cost && (S.owned[k] || 0) < an.max) { S.gold -= an.cost; S.owned[k] = (S.owned[k] || 0) + 1; Animals.add(k); Snd.buy(); if (k === 'vaca') Snd.moo(); else if (k === 'porco') Snd.oink(); else Snd.neigh(); toast('Comprou ' + an.name.toLowerCase() + ' (−' + an.cost + ' ◎) — já está no curral! 🐾', 'good'); requestSave(); openShop(); } else Snd.error();
     } else if (a === 'eat') {
-      if (S.gold >= 22 && S.energy < 100) { const g = Math.min(40, 100 - S.energy); S.gold -= 22; S.energy += g; Snd.buy(); toast('Você comeu uma torta de maçã! Delícia! +' + Math.round(g) + ' de energia (−22 ◎)', 'good'); openShop(); }
+      if (S.gold >= 22 && S.energy < 100) { const g = Math.min(40, 100 - S.energy); S.gold -= 22; S.energy += g; Snd.buy(); toast('Você comeu uma torta de maçã! Delícia! +' + Math.round(g) + ' de energia (−22 ◎)', 'good'); requestSave(); openShop(); }
     } else if (a === 'up') {
       const k = b.dataset.k, costs = k === 'basket' ? BASKET_COST : k === 'can' ? CAN_COST : BOOTS_COST, lvl = S.up[k] + 1;
       if (S.gold >= costs[lvl]) {
@@ -1171,7 +1178,7 @@
         const msg = k === 'basket' ? 'Cesto de vime melhorado! Capacidade ' + BASKET_CAP[lvl]
           : k === 'can' ? 'Regador maior! Capacidade ' + CAN_CAP[lvl] + ' (já está cheio)'
           : 'Botas leves! Velocidade ' + Math.round(BOOTS[lvl] * 100) + '%';
-        toast(msg + ' (−' + costs[lvl] + ' ◎)', 'good'); openShop();
+        toast(msg + ' (−' + costs[lvl] + ' ◎)', 'good'); requestSave(); openShop();
       } else Snd.error();
     } else if (a === 'chars') openCharPicker();
     else if (a === 'rename') openRename();
