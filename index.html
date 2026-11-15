@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>fazenda_leankar</title>
+  <link rel="icon" href="assets/fazendeiro/glove1.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="panelLeft" class="panel">
+      <canvas id="portrait" width="72" height="72"></canvas>
+      <div class="info">
+        <div class="nameRow"><b id="nameInfo">Elias</b><span id="dayInfo">Dia 1</span></div>
+        <div class="timeRow"><span id="timeInfo">06:00</span><span id="weatherInfo">☀️</span></div>
+        <div class="bar energy" title="Energia"><i id="energyBar"></i><span id="energyTxt"></span></div>
+        <div class="bar water" title="Água do regador"><i id="waterBar"></i><span id="waterTxt"></span></div>
+      </div>
+    </div>
+
+    <div id="panelRight" class="panel">
+      <div id="money"><span class="coin">◎</span><b id="moneyTxt">0</b></div>
+      <div class="goalLabel" id="goalLabel">Meta</div>
+      <div class="goalbar"><i id="goalBar"></i></div>
+      <div class="btnRow">
+        <button id="btnMusic" title="Música (M)">🎵</button>
+        <button id="btnMute" title="Efeitos sonoros (N)">🔊</button>
+        <button id="btnMenu" title="Menu (Esc)">☰</button>
+      </div>
+    </div>
+
+    <div id="tutorial" class="hidden"></div>
+
+    <div id="bag" class="panel"></div>
+
+    <div id="hotbarWrap">
+      <div id="toolName"></div>
+      <div id="hotbar"></div>
+    </div>
+
+    <div id="toast"></div>
+
+    <div id="touch" class="hidden">
+      <div id="stick">
+        <div id="knob"></div>
+      </div>
+      <div id="touchBtns">
+        <button id="tbAct">AGIR</button>
+        <button id="tbUse">E</button>
+        <button id="tbTool">🔧</button>
+        <button id="tbSeed">🌱</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal" class="hidden">
+    <div id="modalBox"></div>
+  </div>
+
+  <div id="title">
+    <div class="tcloud c1"></div>
+    <div class="tcloud c2"></div>
+    <div class="tcloud c3"></div>
+    <div class="titleBox" id="titleBox">
+      <div class="duo"><img id="titleImg1" alt="Elias"><img id="titleImg2" alt="Karen"></div>
+      <div class="titleText">
+        <h1>fazenda_leankar</h1>
+        <p class="sub">Ara, plante, regue, colha e venda. Escolha entre Elias e Karen e transforme este pedaço de terra
+          na fazenda dos seus sonhos.
+        </p>
+        <div class="titleBtns">
+          <button id="btnContinue" class="big hidden">Continuar</button>
+          <button id="btnNew" class="big">Novo jogo</button>
+        </div>
+        <div class="controls">
+          <div><kbd>W A S D</kbd> / setas — mover &nbsp; <kbd>Shift</kbd> — correr</div>
+          <div><kbd>1</kbd>–<kbd>6</kbd> — ferramentas &nbsp; <kbd>Espaço</kbd> / clique — usar</div>
+          <div><kbd>E</kbd> — interagir (loja, caixa, poço, dormir) &nbsp; <kbd>Q</kbd> — trocar semente</div>
+          <div><kbd>M</kbd> — música &nbsp; <kbd>N</kbd> — efeitos sonoros &nbsp; <kbd>Esc</kbd> — pausa</div>
+        </div>
+        <div id="loading">Carregando...</div>
+      </div>
+    </div>
+    <div class="selectBox hidden" id="charSelect">
+      <h2>Escolha seu personagem</h2>
+      <p>Os dois têm as mesmas habilidades — é só escolher com quem você quer cuidar da fazenda.</p>
+      <div class="cards" id="cards"></div>
+      <button id="btnBack" class="big alt">Voltar</button>
+    </div>
+  </div>
+
+  <script src="art.js"></script>
+  <script src="animais.js"></script>
+  <script src="game.js"></script>
+</body>
+
+</html>
