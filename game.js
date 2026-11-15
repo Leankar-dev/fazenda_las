@@ -523,14 +523,29 @@
   }
 
   /* ---------------- salvar / carregar ---------------- */
-  function save() {
-    if (!S) return;
+  // Grava o jogo. Devolve { ok: true } ou { ok: false, error }. Em falha (cota cheia, modo privado, storage bloqueado)
+  // avisa o jogador: o autosave avisa uma vez e repete no máximo a cada 60 s; o botão "Salvar" (manual) sempre avisa.
+  let saveFailing = false, lastSaveWarn = -1e9;
+  function saveErrorText(e) {
+    const quota = e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014);
+    return quota ? 'Sem espaço no navegador para salvar! Libere espaço (dados do site) — o progresso NÃO está sendo salvo.'
+      : 'O navegador não deixou salvar (modo privado ou dados do site bloqueados) — o progresso NÃO está sendo salvo.';
+  }
+  function save(manual) {
+    if (!S) return { ok: false, error: new Error('nenhum jogo em andamento') };
     try {
       S.obs = obs.map(o => o.type === 'ftree' ? [o.type, o.x, o.y, o.v, o.hp, o.age, o.fruit, o.cd] : [o.type, o.x, o.y, o.v, o.hp]);
       S.eggList = eggs.map(e => [e.x, e.y]);
       S.px = P.x; S.py = P.y; S.dir = P.dir;
       localStorage.setItem(SAVE_KEY, JSON.stringify(S));
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      console.warn('falha ao salvar', e);
+      saveFailing = true;
+      if (manual === true || time - lastSaveWarn > 60) { lastSaveWarn = time; toast('⚠ ' + saveErrorText(e), 'bad'); Snd.error(); }
+      return { ok: false, error: e };
+    }
+    if (saveFailing) { saveFailing = false; toast('Salvamento restabelecido ✓', 'good'); }
+    return { ok: true };
   }
   function loadSave() {
     let j = null;
@@ -1166,7 +1181,7 @@
       Snd.pop(); toast('Nome salvo: ' + CHAR.name + '!', 'good'); save(); closeModal();
     }
     else if (a === 'char') { const k = b.dataset.k; if (CHARACTERS[k]) { S.char = k; setCharacter(k); buildHotbar(); Snd.pop(); toast('Agora você joga com ' + CHAR.name + '!', 'good'); save(); closeModal(); } }
-    else if (a === 'save') { save(); toast('Jogo salvo!', 'good'); }
+    else if (a === 'save') { if (save(true).ok) toast('Jogo salvo!', 'good'); }
     else if (a === 'resetask') { currentModal = 'reset'; setModal(`<h2>Novo jogo</h2><p>Começar um novo jogo? O progresso atual será perdido.</p><div class="modalBtns"><button class="mb red" data-a="reset">Sim, apagar</button><button class="mb" data-a="close">Cancelar</button></div>`); }
     else if (a === 'reset') { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ } running = false; location.reload(); }
     updateHud(true);
