@@ -248,6 +248,185 @@
     },
   };
 
+  /* ---------- 6) R1: "Novo jogo" nunca apaga o save sem guardar uma cópia ---------- */
+  S_['novo-jogo-copia'] = {
+    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); },
+    async run() {
+      const orig = JSON.parse(F.save_v1_atual);
+      await bootReady();
+      $('btnNew').click(); await wait(100);
+      ok('pede confirmação e promete a cópia de segurança', vis('confirmNew') && $('confirmMsg').textContent.includes('cópia de segurança'), $('confirmMsg').textContent);
+      $('btnYes').click(); await wait(100);
+      ok('a cópia já existe ANTES de escolher o personagem (idêntica ao save)', backups().length === 1 && localStorage.getItem(backups()[0]) === F.save_v1_atual, backups().length);
+      ok('o save principal continua intacto enquanto escolhe', localStorage.getItem(KEY) === F.save_v1_atual && vis('charSelect'));
+      document.querySelector('.charCard').click(); await gameReady();
+      const main = JSON.parse(localStorage.getItem(KEY));
+      ok('o jogo novo foi gravado (dia 1)', main.day === 1, main.day);
+      ok('o contador rev continua a contagem do save anterior (outras abas veem a mudança)', main.rev === (orig.rev || 0) + 1, main.rev);
+      ok('a cópia do jogo anterior continua lá, idêntica', backups().length === 1 && localStorage.getItem(backups()[0]) === F.save_v1_atual);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['novo-jogo-falha'] = {       // o jogo novo NÃO consegue iniciar: o save antigo não pode ter sido apagado
+    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
+    async run() {
+      await bootReady();
+      $('btnNew').click(); await wait(100); $('btnYes').click(); await wait(100); document.querySelector('.charCard').click();
+      let n = 0; while (!/falha-simulada/.test($('loadTxt').textContent) && n++ < 100) await wait(100);
+      ok('mostra o erro do jogo novo', /falha-simulada/.test($('loadTxt').textContent), $('loadTxt').textContent);
+      ok('o jogo não iniciou', !window.__game);
+      ok('o save antigo NÃO foi apagado', localStorage.getItem(KEY) === F.save_v1_atual);
+      ok('sem erros JS não tratados', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['novo-jogo-pausa'] = {       // "Novo jogo" pelo menu de pausa (recarrega a página: o cenário roda duas vezes)
+    seed() { if (sessionStorage.getItem('ran') === 'novo-jogo-pausa') return; localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); },
+    async run() {
+      const orig = JSON.parse(F.save_v1_atual);
+      await bootReady();
+      if (sessionStorage.getItem('ran') !== 'novo-jogo-pausa') {
+        sessionStorage.setItem('ran', 'novo-jogo-pausa');
+        $('btnContinue').click(); await gameReady(); $('btnMenu').click(); await wait(50);
+        $('modalBox').querySelector('button[data-a=resetask]').click(); await wait(50);
+        ok('o texto promete a cópia', $('modalBox').textContent.includes('cópia de segurança'));
+        $('modalBox').querySelector('button[data-a=reset]').click(); await wait(3000); return;
+      }
+      ok('o save principal foi apagado (vai começar do zero)', localStorage.getItem(KEY) === null);
+      const bk = backups().map(k => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }).filter(Boolean);
+      ok('o jogo anterior ficou numa cópia válida (mesmo dia)', bk.length === 1 && bk[0].day === orig.day, JSON.stringify(bk.map(b => b.day)));
+      ok('a tela inicial oferece restaurar essa cópia', vis('btnSpRestore') && $('btnSpRestore').textContent.includes('Dia ' + orig.day), $('btnSpRestore').textContent);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['novo-jogo-sem-espaco'] = {  // a cópia não cabe (cota cheia): avisa, oferece baixar e só apaga se o jogador insistir
+    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); fillStorage(); },
+    async run() {
+      await bootReady();
+      ok('save válido carregou (Continuar visível)', vis('btnContinue'));
+      $('btnNew').click(); await wait(100); $('btnYes').click(); await wait(100);
+      ok('avisa que NÃO coube a cópia', $('confirmMsg').textContent.includes('Não foi possível guardar uma cópia'), $('confirmMsg').textContent);
+      ok('botão vira "Apagar mesmo assim" e aparece "Baixar cópia"', $('btnYes').textContent === 'Apagar mesmo assim' && vis('btnNewDl'));
+      ok('não avançou: confirmação ainda aberta, save intacto, nenhuma cópia', vis('confirmNew') && !vis('charSelect') && localStorage.getItem(KEY) === F.save_v1_atual && backups().length === 0);
+      $('btnNewDl').click(); await wait(100);
+      $('btnYes').click(); await wait(100);
+      ok('só com o 2º clique avança para a escolha do personagem', vis('charSelect'));
+      document.querySelector('.charCard').click(); const G = await gameReady();
+      ok('o jogo novo inicia', !!G.S && G.S.day === 1);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['novo-jogo-rev'] = {
+    seed() { localStorage.clear(); const o = JSON.parse(F.save_v1_atual); o.rev = 7; localStorage.setItem(KEY, JSON.stringify(o)); },
+    async run() {
+      await bootReady(); $('btnNew').click(); await wait(100); $('btnYes').click(); await wait(100); document.querySelector('.charCard').click(); await gameReady();
+      const main = JSON.parse(localStorage.getItem(KEY));
+      ok('jogo novo grava rev 8 (continua a contagem do save substituído)', main.day === 1 && main.rev === 8, main.day + '/' + main.rev);
+    },
+  };
+
+  /* ---------- 7) R2: aba velha NÃO sobrescreve aba nova ---------- */
+  S_['aba-velha'] = {
+    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); },
+    async run() {
+      await bootReady(); $('btnContinue').click(); const G = await gameReady(), S = G.S;
+      const revs = []; let allOk = true;
+      for (let i = 0; i < 4; i++) { allOk = G.save().ok && allOk; revs.push(JSON.parse(localStorage.getItem(KEY)).rev); }
+      ok('uso normal: 4 gravações seguidas, rev sobe 1 a 1, sem falso conflito', allOk && revs.join(',') === '1,2,3,4', revs.join(','));
+      const myDay = S.day;
+      // "a outra aba" joga e salva: rev maior, dia 9
+      const other = JSON.parse(localStorage.getItem(KEY)); other.rev += 5; other.day = 9; other.gold = 9999;
+      const otherRaw = JSON.stringify(other); localStorage.setItem(KEY, otherRaw);
+      let r = G.save(); ok('save() da aba velha é recusado com erro "Conflict"', r.ok === false && r.error && r.error.name === 'Conflict', r.error && r.error.name);
+      window.dispatchEvent(new Event('pagehide')); G.save(true); G.save();
+      ok('fechar/esconder a aba velha (pagehide) NÃO sobrescreve: save da outra aba intacto', localStorage.getItem(KEY) === otherRaw);
+      ok('a aba velha não gerou cópia à toa', backups().length === 0);
+      steps(G, 5); await wait(100);
+      ok('aparece o aviso "outra aba" com Recarregar e Usar esta aba', !$('modal').classList.contains('hidden') && $('modalBox').textContent.includes('outra aba') && !!$('modalBox').querySelector('button[data-a=stalereload]') && !!$('modalBox').querySelector('button[data-a=staleuse]'));
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await wait(50);
+      ok('Esc não fecha o aviso (senão o jogador seguiria jogando sem salvar)', !$('modal').classList.contains('hidden'));
+      $('modalBox').querySelector('button[data-a=staleuse]').click(); await wait(100);
+      ok('"Usar esta aba" guarda ANTES uma cópia do que a outra aba salvou', backups().some(k => localStorage.getItem(k) === otherRaw));
+      const mine = JSON.parse(localStorage.getItem(KEY));
+      ok('...e passa a gravar o estado desta aba com rev maior', mine.day === myDay && mine.rev === other.rev + 1, mine.day + '/' + mine.rev);
+      ok('avisa que esta aba assumiu', toasts().some(t => t.includes('Esta aba agora salva')), JSON.stringify(toasts()));
+      ok('depois disso os saves normais voltam', G.save().ok && JSON.parse(localStorage.getItem(KEY)).rev === other.rev + 2);
+      // evento "storage" (outra aba gravou): esta aba vira velha na hora, sem nem tentar gravar
+      const o2 = JSON.parse(localStorage.getItem(KEY)); o2.rev += 3; const raw2 = JSON.stringify(o2); localStorage.setItem(KEY, raw2);
+      window.dispatchEvent(new StorageEvent('storage', { key: KEY, newValue: raw2, storageArea: localStorage }));
+      r = G.save(); ok('evento storage: próximo save recusado e storage intocado', r.ok === false && r.error.name === 'Conflict' && localStorage.getItem(KEY) === raw2);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  /* ---------- 8) R3: save "válido" porém hostil é corrigido, não trava o jogo ---------- */
+  function hostile(mutate, check) {
+    return {
+      seed() { localStorage.clear(); const s = JSON.parse(F.save_v1_atual); mutate(s); window.__hostileRaw = JSON.stringify(s); localStorage.setItem(KEY, window.__hostileRaw); },
+      async run() {
+        const raw = window.__hostileRaw;
+        await bootReady();
+        ok('sem aviso de save inválido (é lido e corrigido)', !vis('saveProblem')); ok('Continuar visível', vis('btnContinue'));
+        $('btnContinue').click(); const G = await gameReady(), S = G.S;
+        ok('o jogo INICIOU', !!S);
+        ok('cópia do ORIGINAL (hostil) guardada antes de corrigir', backups().length === 1 && localStorage.getItem(backups()[0]) === raw, backups().length);
+        ok('avisa que houve dados inválidos corrigidos', toasts().some(t => t.includes('dados inválidos')), JSON.stringify(toasts()));
+        ok('sem NaN/Infinity no estado', !hasNaN(S), hasNaN(S));
+        steps(G, 80); ok('80 quadros sem erro de JS', !window.__errs.length, window.__errs.join('|'));
+        ok('HUD sem "NaN"/"undefined"', !/NaN|undefined/.test($('hud').innerText), $('hud').innerText.slice(0, 100));
+        check(G, S);
+        G.endDay(false); steps(G, 20); ok('passa um dia sem erro', !window.__errs.length, window.__errs.join('|'));
+        ok('regravar funciona e o JSON gravado não tem NaN', G.save().ok && !hasNaN(JSON.parse(localStorage.getItem(KEY))));
+      },
+    };
+  }
+  S_['hostil-estado'] = hostile(s => {
+    s.tool = 99; s.goal = -1; s.selSeed = 'zzz'; s.energy = 'x'; s.water = 'x'; s.min = -50; s.px = 'abc'; s.dir = 77; s.laid = 'x'; s.rev = 'x';
+    s.owned = { vaca: 4000, porco: 4000, cavalo: 4000 }; s.seeds.cenoura = -5; s.up.basket = 99; s.stat.till = -3; s.char = 'ninguem';
+  }, (G, S) => {
+    ok('tool dentro de 0..5 e goal dentro de 0..4', S.tool >= 0 && S.tool <= 5 && S.goal >= 0 && S.goal <= 4, S.tool + '/' + S.goal);
+    ok('selSeed e char válidos', S.selSeed === 'cenoura' && S.char === 'fazendeiro', S.selSeed + '/' + S.char);
+    ok('energia e água numéricas e dentro da faixa', S.energy === 100 && Number.isFinite(S.water) && S.water >= 0 && S.water <= 50, S.energy + '/' + S.water);
+    ok('relógio dentro do dia (06:00..24:00)', S.min >= 360 && S.min <= 1440, S.min);
+    ok('posição finita, dir 0..3, laid 1|2, rev inteiro', Number.isFinite(G.P.x) && Number.isFinite(G.P.y) && S.dir >= 0 && S.dir <= 3 && (S.laid === 1 || S.laid === 2) && Number.isInteger(S.rev), [G.P.x, S.dir, S.laid, S.rev]);
+    ok('owned limitado ao máximo da loja (4/4/2) — nada de 8.000 animais', S.owned.vaca === 4 && S.owned.porco === 4 && S.owned.cavalo === 2 && G.Animals.list.length <= 11, JSON.stringify(S.owned) + ' animais=' + G.Animals.list.length);
+    ok('sementes/melhoria/estatística negativas ou enormes viram valores válidos', S.seeds.cenoura === 0 && S.up.basket === 2 && S.stat.till === 0);
+  });
+  S_['hostil-estruturas'] = hostile(s => {
+    s.obs = {}; s.obsInit = true; s.felled = {}; s.eggList = 'x'; s.digs = [[1, 2], ['a', 1], [999, 999], null]; s.truffleList = 5; s.soil[3] = 7; s.soil[4] = 'x'; s.milked = {}; s.meatDone = 'abc';
+    s.crops = { '6,8': { t: 'milho', age: 2, pt: 1, pk: 'x' }, '7,8': { t: 'zzz', age: 1 }, 'a,b': { t: 'milho', age: 1 }, '9,9': { t: 'milho', age: 'x' }, '999,999': { t: 'milho', age: 1 }, '10,9': null };
+  }, (G, S) => {
+    ok('só a planta válida sobrou, sem pt/pk', JSON.stringify(Object.keys(S.crops)) === '["6,8"]' && JSON.stringify(S.crops['6,8']) === '{"t":"milho","age":2}', JSON.stringify(S.crops));
+    ok('lista de obstáculos inválida => o mapa é regenerado (não fica vazio)', G.obs.length > 20, G.obs.length);
+    ok('felled/eggList/truffleList/milked/meatDone viram arrays', ['felled', 'eggList', 'truffleList', 'milked', 'meatDone'].every(k => Array.isArray(S[k])));
+    ok('digs: só o par válido sobrou', JSON.stringify(S.digs) === '[[1,2]]', JSON.stringify(S.digs));
+    ok('chão só com 0/1/2', S.soil.every(v => v === 0 || v === 1 || v === 2) && S.soil.length === 46 * 34);
+  });
+  S_['hostil-crops-obs'] = hostile(s => {
+    s.crops = null; s.obsInit = true;
+    s.obs = [['rock', 1, 1, 0, 3], ['zzz', 1, 1, 0, 1], ['rock', 999, 999, 0, 3], 'x', null, ['ftree', 20, 12, 99, 6, 'x', 1, 2], ['bush', 1, 1, 0, 1], ['rock', 30, 12, 7, -5]];
+  }, (G, S) => {
+    ok('crops nulo vira {}', JSON.stringify(S.crops) === '{}', JSON.stringify(S.crops));
+    ok('obstáculos: só os 3 válidos (tipo desconhecido, fora do mapa, lixo e tile repetido caem)', S.obs.length === 3, S.obs.length);
+    const ft = S.obs.find(o => o[0] === 'ftree'), rk = S.obs.find(o => o[0] === 'rock' && o[1] === 30);
+    ok('árvore: espécie 99 vira índice válido, idade "x" vira 0', ft && ft[3] >= 0 && ft[3] < 4 && ft[5] === 0, JSON.stringify(ft));
+    ok('pedra: variação 7 vira 0..1 e hp negativo vira o padrão', rk && rk[3] >= 0 && rk[3] <= 1 && rk[4] === 3, JSON.stringify(rk));
+  });
+  S_['falha-inicio'] = {      // o save passa na leitura mas o jogo não consegue iniciá-lo: cópia + baixar, sem "recarregue"
+    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
+    async run() {
+      await bootReady(); $('btnContinue').click();
+      let n = 0; while (!vis('saveProblem') && n++ < 100) await wait(100);
+      ok('aparece a caixa "Problema com o jogo salvo"', vis('saveProblem'));
+      ok('explica que o save foi lido mas não iniciou, com o detalhe do erro', $('spMsg').textContent.includes('não conseguiu iniciá-lo') && $('spMsg').textContent.includes('falha-simulada'), $('spMsg').textContent);
+      ok('NÃO manda "recarregar a página" (não resolveria)', !/Recarregue/.test($('spMsg').textContent + $('loadTxt').textContent), $('loadTxt').textContent);
+      ok('oferece Baixar cópia', vis('btnSpExport'));
+      ok('guardou uma cópia idêntica ao save', backups().length === 1 && localStorage.getItem(backups()[0]) === F.save_v1_atual);
+      ok('o save original NÃO foi alterado', localStorage.getItem(KEY) === F.save_v1_atual);
+      $('btnSpExport').click(); await wait(100);
+      ok('sem erros JS não tratados', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
   /* ---------- 5) gravador de fixtures (usado por tests/make-fixtures.js; não é um teste) ---------- */
   S_['gravar-fixture'] = {
     seed() { localStorage.clear(); },

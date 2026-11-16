@@ -12,6 +12,9 @@ const SCENARIOS = [
   'rotacao-copias', 'restaurar',                                                       // cópias de segurança
   'quota-jogo', 'quota-boot', 'storage-bloqueado',                                     // falhas de gravação (cota REAL cheia, modo privado)
   'salva-eventos', 'pt-pk-fora-do-save',                                               // gatilhos de save e conteúdo gravado
+  'novo-jogo-copia', 'novo-jogo-falha', 'novo-jogo-pausa', 'novo-jogo-sem-espaco', 'novo-jogo-rev',   // R1: Novo jogo nunca apaga sem cópia
+  'aba-velha',                                                                         // R2: aba velha não sobrescreve aba nova
+  'hostil-estado', 'hostil-estruturas', 'hostil-crops-obs', 'falha-inicio',            // R3: save válido porém hostil
 ];
 
 function loadFixtures() {
