@@ -26,6 +26,14 @@
     if (!window.__game) throw new Error('jogo não iniciou: ' + window.__errs.join('|'));
     await wait(200); return window.__game;
   }
+  // O início do jogo (botão → rAF → setTimeout) depende de um quadro REAL do headless, e o tempo virtual corre bem mais rápido que o real:
+  // o quadro chega quando quer (de 30 s a nunca, em tempo virtual). Os cenários em que o jogo NÃO inicia (e portanto nunca chegam ao loop de
+  // jogo) usam este atalho: se o rAF não vier em 50 ms de tempo virtual, o timer dispara o mesmo callback (determinístico).
+  function fastRaf() {
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = cb => { let done = false; const f = t => { if (!done) { done = true; cb(t); } }; raf(f); setTimeout(() => f(performance.now()), 50); return 0; };
+  }
+  async function waitStart(cond) { let n = 0; while (!cond() && n++ < 100) await wait(100); }
   async function startNew(card = 0) { $('btnNew').click(); await wait(100); document.querySelectorAll('.charCard')[card].click(); return gameReady(); }
   const steps = (G, n, dt = .05) => { for (let i = 0; i < n; i++) G.step(dt); };
   // enche o localStorage ATÉ ESTOURAR DE VERDADE (cota real do navegador, não simulada)
@@ -197,7 +205,7 @@
       ok('boot normal, sem aviso (não há o que ler)', !vis('saveProblem') && !vis('btnContinue'));
       const G = await startNew();
       ok('novo jogo inicia mesmo com storage bloqueado', !!G.S);
-      clearToasts(); const r = G.save();
+      clearToasts(); const r = G.save(true);      // manual: sempre avisa (o autosave só repete o aviso a cada 60 s de jogo, e isso depende de quantos quadros o headless entregou)
       ok('save() devolve {ok:false, SecurityError}', r.ok === false && r.error && r.error.name === 'SecurityError', r.error && r.error.name);
       ok('mensagem fala de modo privado/dados bloqueados', toasts().some(t => t.includes('modo privado')), JSON.stringify(toasts()));
       steps(G, 40);
@@ -268,11 +276,11 @@
     },
   };
   S_['novo-jogo-falha'] = {       // o jogo novo NÃO consegue iniciar: o save antigo não pode ter sido apagado
-    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
+    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); fastRaf(); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
     async run() {
       await bootReady();
       $('btnNew').click(); await wait(100); $('btnYes').click(); await wait(100); document.querySelector('.charCard').click();
-      let n = 0; while (!/falha-simulada/.test($('loadTxt').textContent) && n++ < 100) await wait(100);
+      await waitStart(() => /falha-simulada/.test($('loadTxt').textContent));
       ok('mostra o erro do jogo novo', /falha-simulada/.test($('loadTxt').textContent), $('loadTxt').textContent);
       ok('o jogo não iniciou', !window.__game);
       ok('o save antigo NÃO foi apagado', localStorage.getItem(KEY) === F.save_v1_atual);
@@ -412,10 +420,10 @@
     ok('pedra: variação 7 vira 0..1 e hp negativo vira o padrão', rk && rk[3] >= 0 && rk[3] <= 1 && rk[4] === 3, JSON.stringify(rk));
   });
   S_['falha-inicio'] = {      // o save passa na leitura mas o jogo não consegue iniciá-lo: cópia + baixar, sem "recarregue"
-    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
+    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); fastRaf(); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
     async run() {
       await bootReady(); $('btnContinue').click();
-      let n = 0; while (!vis('saveProblem') && n++ < 100) await wait(100);
+      await waitStart(() => vis('saveProblem'));
       ok('aparece a caixa "Problema com o jogo salvo"', vis('saveProblem'));
       ok('explica que o save foi lido mas não iniciou, com o detalhe do erro', $('spMsg').textContent.includes('não conseguiu iniciá-lo') && $('spMsg').textContent.includes('falha-simulada'), $('spMsg').textContent);
       ok('NÃO manda "recarregar a página" (não resolveria)', !/Recarregue/.test($('spMsg').textContent + $('loadTxt').textContent), $('loadTxt').textContent);

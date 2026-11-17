@@ -3,7 +3,7 @@
 Testes automáticos de **salvamento e carregamento**. Rodam o jogo de verdade num Chrome/Edge *headless* (sem janela), com `localStorage` limpo a cada cenário. Sem dependências: só **Node 18+** e um Chrome ou Edge instalado.
 
 ```text
-node tests/run.js                      # roda todos os cenários (5 a 9 min; 4 em paralelo)
+node tests/run.js                      # roda todos os cenários (2 a 5 min; 4 em paralelo)
 node tests/run.js quota-jogo           # roda só um (ou vários) cenário(s)
 node tests/run.js --list               # lista os cenários
 node tests/run.js --chrome="C:/caminho/chrome.exe" --jobs=2
@@ -21,6 +21,9 @@ Código de saída `0` = tudo passou · `1` = algum teste falhou · `2` = erro de
 | Saves que **não podem carregar** | `fixture-truncado`, `fixture-invalido`, `fixture-futuro`, `fixture-shape`, `fixture-versao` | Aviso na tela inicial com o motivo certo, save original **intacto**, 1 cópia de segurança idêntica, "Novo jogo" pede confirmação |
 | Cópias de segurança | `rotacao-copias`, `restaurar` | Só as 3 mais recentes ficam; restaurar oferece a cópia válida mais nova e realmente restaura |
 | **Falhas de gravação** | `quota-jogo`, `quota-boot`, `storage-bloqueado` | Cota **realmente** cheia (o teste enche o `localStorage` até o navegador lançar `QuotaExceededError`): `save()` devolve `{ok:false, error}`, avisa o jogador, o botão Salvar não mente, o aviso não se repete a cada autosave, o save anterior não é corrompido, e há aviso de recuperação. Também: cópia que não cabe, e modo privado (`SecurityError`) |
+| **R1** — Novo jogo nunca apaga sem cópia | `novo-jogo-copia`, `novo-jogo-falha`, `novo-jogo-pausa`, `novo-jogo-sem-espaco`, `novo-jogo-rev` | Título e pausa guardam uma cópia **antes** de apagar; se o jogo novo falhar ao iniciar o save antigo continua intacto; sem espaço para a cópia → oferece baixar e exige um 2º clique; `rev` continua a contagem |
+| **R2** — aba velha não sobrescreve | `aba-velha` | Aba velha tem o save recusado (`Conflict`), `pagehide` não sobrescreve, aparece o aviso (Esc não fecha), "Usar esta aba" guarda cópia da outra, evento `storage` marca a aba como velha; uso normal não dá falso conflito |
+| **R3** — save válido porém hostil | `hostil-estado`, `hostil-estruturas`, `hostil-crops-obs`, `falha-inicio` | `tool: 99`, `goal: -1`, `owned: 4000`, `obs: {}`, `crops: null`, espécie desconhecida, `energy: "x"`... são corrigidos: o jogo inicia, 80 quadros sem erro, sem `NaN`, original guardado em cópia; se o início falhar → caixa com Baixar cópia, sem "recarregue" |
 | Gatilhos e conteúdo | `salva-eventos`, `pt-pk-fora-do-save` | Salva ~0,8 s depois de compra/venda/plantio (rajadas viram 1 gravação; compra recusada não grava); `pt`/`pk` das plantas não vão para o save e o estado vivo não muda |
 
 ## Fixtures (`tests/fixtures/*.json`)
@@ -41,7 +44,7 @@ São **versionadas** e geradas por `node tests/make-fixtures.js` (que usa o jogo
 
 ## Como o teste é validado
 
-A suíte foi conferida com **mutações** (quebrar o jogo de propósito numa cópia e ver se algum teste falha): `save()` que engole o erro, `loadSave()` sem completar `up`/`stat`, save voltando a gravar `pt`/`pk`, e save inválido sendo apagado em vez de copiado. Todas foram detectadas.
+A suíte foi conferida com **mutações** (quebrar o jogo de propósito numa cópia e ver se algum teste falha): `save()` que engole o erro, `loadSave()` sem completar `up`/`stat`, save voltando a gravar `pt`/`pk`, save inválido apagado em vez de copiado, **Novo jogo sem cópia (título e pausa) ou apagando antes de iniciar**, **sem checagem de `rev` entre abas**, **sanitizador desligado ou sem limite de `owned`** e **falha ao iniciar sem a caixa de baixar**. Todas foram detectadas.
 
 ## Limites
 

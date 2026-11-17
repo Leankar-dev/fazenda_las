@@ -40,8 +40,8 @@ function buildSite(dest, { files = {}, fixtures = {}, scenarioFile = path.join(_
 
 const decode = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 
-// roda um cenário e devolve { tests: [{ok,name,detail}], data }. Tenta até 3 vezes (o headless às vezes devolve o DOM antes do fim).
-function runScenario(chrome, siteDir, scenario, { timeoutMs = 240000, virtualMs = 150000, attempts = 3 } = {}) {
+// roda um cenário e devolve { tests: [{ok,name,detail}], data }. Tenta até 6 vezes (o headless às vezes devolve o DOM antes do fim).
+function runScenario(chrome, siteDir, scenario, { timeoutMs = 240000, virtualMs = 150000, attempts = 6 } = {}) {
   const url = pathToFileURL(path.join(siteDir, 'index.html')).href + '?debug#' + scenario;
   const once = () => new Promise(resolve => {
     const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'fazenda-test-'));
@@ -50,7 +50,8 @@ function runScenario(chrome, siteDir, scenario, { timeoutMs = 240000, virtualMs 
     const child = cp.spawn(chrome, args, { stdio: ['ignore', 'pipe', 'ignore'] });
     let out = '';
     const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.on('data', d => { out += d; });
+    // O Chrome às vezes imprime o DOM e NÃO encerra (a rodada esperava o timeout inteiro): ao ver o fim do documento, encerra o processo.
+    child.stdout.on('data', d => { out += d; if (/<\/html>\s*$/i.test(out)) setTimeout(() => child.kill(), 300); });
     const done = () => { clearTimeout(timer); try { fs.rmSync(prof, { recursive: true, force: true }); } catch (e) { /* perfil preso: ignora */ } resolve(out); };
     child.on('close', done); child.on('error', done);
   });
