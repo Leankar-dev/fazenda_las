@@ -42,6 +42,21 @@ São **versionadas** e geradas por `node tests/make-fixtures.js` (que usa o jogo
 
 **Regra do projeto:** ao mudar o **formato** do save (campo novo no estado, schema novo), (1) acrescente o padrão em `newState()`, (2) trate em `parseSave()` (e em `MIGRATIONS`, se mudar o formato), (3) regenere as fixtures com `node tests/make-fixtures.js` e (4) **mantenha** a fixture do formato anterior (`save_v1_pre_carne.json` é a "versão anterior" de hoje — quando houver outra mudança, grave uma nova a partir do commit anterior à mudança).
 
+## Escrevendo cenários: use o `T` (armazenamento neutro ao formato)
+
+Os cenários em `tests/browser/scenarios.js` **não sabem** em que chave nem em que formato o save mora: tudo passa pelo objeto `T` (bloco no topo do arquivo). Quando o formato mudar (Fase 1b do plano de persistência), **só o bloco `T` é reescrito** — os cenários continuam iguais.
+
+| Quero… | Use |
+|---|---|
+| limpar tudo / semear o save principal | `T.reset()`, `T.setMain(raw)`, `T.setMainState(objeto)` |
+| ler o save principal | `T.readMain()` (texto), `T.mainState()` (objeto; `null` se não há) |
+| simular "outra aba" gravando / apagando | `T.setMainState(...)`, `T.removeMain()`, `T.fireStorage(raw)` (raw `null` = apagou), `T.fireStorageClear()` |
+| cópias de segurança | `T.copies()` (`[{key, ts, raw, state}]`, da mais antiga à mais nova), `T.copyRaw(ts)`, `T.seedCopy(ts, raw)` (`ts null` = chave antiga sem data) |
+| contar gravações do save | `Storage.prototype.setItem` + `T.isMainKey(k)` |
+| fixtures / texto de um save mínimo | `T.fixtureState(nome)`, `T.validRaw(dia, ouro)` (atalho `validSave`) |
+
+**Regra:** não escreva `localStorage.getItem('fazenda_…')` nem monte chaves `…_backup_…` num cenário. O que continua direto são os utilitários **que não dependem do formato**: `fillStorage()` (enche a cota de verdade) e os marcadores em `sessionStorage` dos cenários que recarregam a página.
+
 ## Como o teste é validado
 
 A suíte foi conferida com **mutações** (quebrar o jogo de propósito numa cópia e ver se algum teste falha): `save()` que engole o erro, `loadSave()` sem completar `up`/`stat`, save voltando a gravar `pt`/`pk`, save inválido apagado em vez de copiado, **Novo jogo sem cópia (título e pausa) ou apagando antes de iniciar**, **sem checagem de `rev` entre abas**, **sanitizador desligado ou sem limite de `owned`** e **falha ao iniciar sem a caixa de baixar**. Todas foram detectadas.
