@@ -19,12 +19,13 @@
        T.copyRaw(ts)              texto da cópia com esse ts (null = sem data), ou null
        T.seedCopy(ts, raw)        cria uma cópia de segurança (ts null = chave antiga sem data)
        T.fixtureState(nome)       estado (objeto) de uma fixture do tests/fixtures
+       T.readCfg()                configuração de áudio gravada ({music, sfx}) ou null
        T.validRaw(dia, ouro)      TEXTO de um save mínimo válido (para semear principal ou cópias)
        T.fireStorage(raw)         dispara o evento "storage" do save principal como se OUTRA aba o tivesse mudado (raw null = apagou)
        T.fireStorageClear()       idem para "limpar os dados do site" (key null)
      ===================================================================================================================================== */
   const T = (() => {
-    const KEY = 'fazenda_leankar_v1', BK = KEY + '_backup';
+    const KEY = 'fazenda_leankar_v1', BK = KEY + '_backup', CFG = 'fazenda_leankar_cfg';
     const parse = raw => { try { return JSON.parse(raw); } catch (e) { return null; } };
     const copyKey = ts => ts === null ? BK : BK + '_' + ts;
     return {
@@ -41,6 +42,7 @@
       copyRaw: ts => localStorage.getItem(copyKey(ts)),
       seedCopy: (ts, raw) => localStorage.setItem(copyKey(ts), raw),
       fixtureState: nome => parse(F[nome]),
+      readCfg: () => { const r = localStorage.getItem(CFG); return r === null ? null : parse(r); },
       validRaw: (day, gold) => JSON.stringify({ v: 1, day, gold, min: 400, soil: new Array(46 * 34).fill(0), crops: {} }),
       fireStorage: raw => window.dispatchEvent(new StorageEvent('storage', { key: KEY, newValue: raw, storageArea: localStorage })),
       fireStorageClear: () => window.dispatchEvent(new StorageEvent('storage', { key: null, newValue: null, storageArea: localStorage })),
@@ -240,6 +242,28 @@
       ok('depois de restaurar: Continuar visível e sem aviso', vis('btnContinue') && !vis('saveProblem'));
       ok('principal = cópia restaurada', T.readMain() === validSave(7, 777));
       ok('o lixo anterior continua guardado numa cópia', T.copies().some(c => c.raw === '{lixo'));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  /* ---------- configuração de áudio (música/efeitos) sobrevive ao recarregar. Recarrega a página: o cenário roda duas vezes ---------- */
+  S_['cfg-audio'] = {
+    seed() { if (sessionStorage.getItem('ran') === 'cfg-audio') return; T.reset(); },
+    async run() {
+      await bootReady();
+      if (sessionStorage.getItem('ran') !== 'cfg-audio') {
+        sessionStorage.setItem('ran', 'cfg-audio');
+        ok('1ª carga: música e efeitos ligados por padrão', $('btnMusic').textContent === '🎵' && $('btnMute').textContent === '🔊', $('btnMusic').textContent + $('btnMute').textContent);
+        $('btnMusic').click(); $('btnMute').click();
+        const c = T.readCfg();
+        ok('desligar grava a configuração (music e sfx = false)', c && c.music === false && c.sfx === false, JSON.stringify(c));
+        sessionStorage.setItem('first', JSON.stringify(tests));
+        location.reload(); await wait(5000); return;
+      }
+      for (const t of JSON.parse(sessionStorage.getItem('first') || '[]')) tests.push(t);
+      ok('depois de recarregar: música e efeitos continuam DESLIGADOS', $('btnMusic').textContent === '🔕' && $('btnMute').textContent === '🔇', $('btnMusic').textContent + $('btnMute').textContent);
+      const c = T.readCfg(); ok('a configuração gravada continua igual', c && c.music === false && c.sfx === false, JSON.stringify(c));
+      $('btnMusic').click(); ok('religar grava music = true', T.readCfg().music === true, JSON.stringify(T.readCfg()));
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };

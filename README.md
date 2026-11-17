@@ -40,6 +40,7 @@ Dias de chuva regam tudo sozinhos. O progresso é salvo automaticamente (localSt
 - `assets/animais/` – cachorro, vaca, cavalo e porco (8 vistas cada), `props/` (37 acessórios) e `tiles/` (15), recortados de `docs/animais.jpeg`
 - `animais.js` – curral, comportamento dos animais e montaria
 - `art.js` – arte procedural complementar (plantações, celeiro, árvores, galinhas...)
+- `save.js` – persistência (`SaveManager`): salvar/carregar, cópias de segurança, proteção contra duas abas e configuração de áudio
 - `game.js` – lógica, renderização, UI e áudio (WebAudio)
 
 ## Música e animações

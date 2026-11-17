@@ -7,16 +7,6 @@
    ============================================================ */
 (() => {
   const TS = 64, MW = 46, MH = 34;
-  const SAVE_KEY = 'fazenda_leankar_v1';
-  (function migrateLegacyKeys() {      // jogo renomeado: fazenda_elias_* -> fazenda_leankar_* (move uma única vez)
-    try {
-      for (const [oldK, newK] of [['fazenda_elias_v1', SAVE_KEY], ['fazenda_elias_cfg', 'fazenda_leankar_cfg']]) {
-        const old = localStorage.getItem(oldK); if (old === null) continue;
-        if (localStorage.getItem(newK) === null) localStorage.setItem(newK, old);
-        localStorage.removeItem(oldK);
-      }
-    } catch (e) { /* storage indisponível */ }
-  })();
   const DAY_START = 6 * 60, DAY_END = 24 * 60;
   const MIN_PER_SEC = 4;                    // 1 dia = 270 s
   const $ = id => document.getElementById(id);
@@ -83,7 +73,6 @@
   const EGG_PRICE = 28, STONE_PRICE = 9, WOOD_PRICE = 10, MILK_PRICE = 42, TRUFFLE_PRICE = 80, MEAT_PRICE = 30;
   const SLEEP_FROM = 18 * 60;                           // só dá para dormir a partir das 18:00
   const MAX_BUSH = 70;                                  // limite de mato no mapa (nasce mato novo toda noite)
-  const SAVE_VERSION = 1;
   const N_CHICKENS = 6;                                  // galinhas no galinheiro (botam ovos 2× por dia)
   const ANIMAL_SHOP = {
     vaca:   { name: 'Vaca',   cost: 260, max: 4, img: 'assets/animais/vaca/front34.png',   info: 'Dá leite todo dia (vende 42 ◎). Ordenhe com E.' },
@@ -312,10 +301,9 @@
 
   /* ---------------- som ---------------- */
   const Snd = (() => {
-    const CFG_KEY = 'fazenda_leankar_cfg';
     let cfg = { music: true, sfx: true };
-    try { Object.assign(cfg, JSON.parse(localStorage.getItem(CFG_KEY) || '{}')); } catch (e) { /* ignore */ }
-    const saveCfg = () => { try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ } };
+    try { Object.assign(cfg, SaveManager.cfg.load()); } catch (e) { /* ignore */ }
+    const saveCfg = () => SaveManager.cfg.save(cfg);
     let ctx = null, master = null, sfxBus = null, musicBus = null, delayIn = null, noiseBuf = null, rainGain = null;
     const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -539,51 +527,20 @@
     for (const k in crops) { const c = Object.assign({}, crops[k]); for (const f of TRANSIENT_CROP_KEYS) delete c[f]; out[k] = c; }
     return out;
   }
-  /* R2 — aba velha NÃO sobrescreve aba nova. Cada gravação sobe `rev` (contador do save). Esta aba lembra o `rev` que leu/gravou por último
-     (`loadedRev`); antes de gravar compara com o que está no storage: se for diferente, OUTRA aba salvou depois — esta aba para de salvar
-     (staleTab) e pergunta ao jogador (recarregar, ou "usar esta aba" guardando antes uma cópia do que a outra salvou). */
-  let loadedRev = 0, staleTab = false, staleShown = false, eraseForced = false;
-  let slotKnown = false;           // N4: esta aba já leu ou gravou um save — se ele sumir do storage, outra aba o apagou (não ressuscitar)
-  /* `rev` de um texto de save: 0 se não houver `rev` válido; null se o texto não é JSON. É a ÚNICA normalização do `rev` (N2): quem LÊ o save
-     (loadedRev), quem confere antes de gravar (storedInfo) e o evento `storage` usam esta função, então nunca divergem (nem com rev 5.5 ou 1e13). */
-  function revOfRaw(raw) {
-    try { const o = JSON.parse(raw); return o && Number.isSafeInteger(o.rev) && o.rev >= 0 ? o.rev : 0; } catch (e) { return null; }
-  }
-  function storedInfo() {          // o que está gravado: { raw, rev }; rev === null se o texto não é um save legível. Lança se o storage falhar.
-    const raw = localStorage.getItem(SAVE_KEY);
-    return raw === null ? { raw: null, rev: 0 } : { raw, rev: revOfRaw(raw) };
-  }
-  const prevSaveInfo = () => { try { return storedInfo(); } catch (e) { return { raw: null, rev: 0 }; } };
-  const conflictError = () => { const e = new Error('este jogo foi salvo mais recentemente em outra aba'); e.name = 'Conflict'; return e; };
+  /* R2 — aba velha NÃO sobrescreve aba nova: a lógica (rev, aba velha, save apagado por outra aba) mora no SaveManager (save.js).
+     Aqui ficam só a INTERFACE: o aviso (modal "outra aba") e os toasts. O que o SaveManager precisa do jogo para gravar entra por configure(), mais abaixo. */
+  let staleShown = false, eraseForced = false;
   function save(manual) {
     if (!S) return { ok: false, error: new Error('nenhum jogo em andamento') };
-    if (staleTab) {                // já sabemos que outra aba salvou depois: não grava nada (nem em pagehide/visibilitychange)
+    const r = SaveManager.save(S);
+    if (r.ok) { if (saveFailing) { saveFailing = false; toast('Salvamento restabelecido ✓', 'good'); } return r; }
+    if (r.error && r.error.name === 'Conflict') {          // outra aba salvou (ou apagou) depois: esta aba não grava mais (nem em pagehide/visibilitychange)
       if (manual === true) toast('⚠ Este jogo foi salvo em outra aba — esta aba não salva mais.', 'bad');
-      return { ok: false, error: conflictError() };
+      return r;
     }
-    try {
-      const cur = storedInfo();
-      const gone = cur.raw === null && slotKnown;                 // N4: outra aba apagou o save — esta aba não o ressuscita
-      if (gone || (cur.raw !== null && cur.rev !== null && cur.rev !== loadedRev)) {
-        staleTab = true; console.warn(gone ? 'save recusado: o save foi apagado em outra aba' : 'save recusado: rev gravado', cur.rev, '≠ rev desta aba', loadedRev);
-        if (manual === true) toast('⚠ Este jogo foi salvo em outra aba — esta aba não salva mais.', 'bad');
-        return { ok: false, error: conflictError() };
-      }
-      if (cur.raw !== null && cur.rev === null) backupSave(cur.raw);        // vai gravar por cima de algo ilegível: guarda antes
-      S.obs = obs.map(o => o.type === 'ftree' ? [o.type, o.x, o.y, o.v, o.hp, o.age, o.fruit, o.cd] : [o.type, o.x, o.y, o.v, o.hp]);
-      S.eggList = eggs.map(e => [e.x, e.y]);
-      S.px = P.x; S.py = P.y; S.dir = P.dir;
-      S.rev = loadedRev + 1;
-      localStorage.setItem(SAVE_KEY, JSON.stringify(Object.assign({}, S, { crops: persistentCrops(S.crops) })));
-      loadedRev = S.rev; slotKnown = true;
-    } catch (e) {
-      console.warn('falha ao salvar', e);
-      saveFailing = true;
-      if (manual === true || time - lastSaveWarn > 60) { lastSaveWarn = time; toast('⚠ ' + saveErrorText(e), 'bad'); Snd.error(); }
-      return { ok: false, error: e };
-    }
-    if (saveFailing) { saveFailing = false; toast('Salvamento restabelecido ✓', 'good'); }
-    return { ok: true };
+    saveFailing = true;
+    if (manual === true || time - lastSaveWarn > 60) { lastSaveWarn = time; toast('⚠ ' + saveErrorText(r.error), 'bad'); Snd.error(); }
+    return r;
   }
   function showStaleModal() {
     staleShown = true; currentModal = 'stale';
@@ -598,31 +555,10 @@
     if (saveTimer) return;
     saveTimer = setTimeout(() => { saveTimer = 0; if (running && S) { lastSave = time; save(); } }, 800);
   }
-  /* Leitura do save. Nunca lança e distingue os casos:
-       { status: 'none' }                                  não existe save
-       { status: 'ok', state, repaired }                   save válido (com defaults aplicados; `repaired` = correções do sanitizeState, e então o original vira cópia)
-       { status: 'invalid', reason, raw, backedUp }        existe mas não dá para usar
-     reason: json (corrompido) · future (versão mais nova que o jogo) · version (sem migração conhecida) · shape (dados faltando).
-     Um save inválido NUNCA é alterado aqui: vai para uma cópia de segurança (as 3 mais recentes) e a tela inicial avisa o jogador. */
-  const BACKUP_KEY = SAVE_KEY + '_backup', MAX_BACKUPS = 3;
-  const MIGRATIONS = {};          // schema N → N+1: função pura (save → save). Vazio: só existe a versão 1.
   /* R3 — limpa o estado lido: tipo errado, valor fora da faixa, estrutura quebrada e espécie desconhecida viram valores seguros em vez de
      travar o jogo. Devolve quantas CORREÇÕES foram feitas (valor presente porém inválido); chave ausente só recebe o padrão e não conta. */
   function sanitizeState(st) {
-    const dflt = newState(); let repairs = 0;
-    const bad = () => { repairs++; };
-    const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
-    const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-    const Pint = (o, k, lo, hi, def) => { const v = o[k], ok = Number.isFinite(v), nv = ok ? Math.max(lo, Math.min(hi, Math.floor(v))) : def; if (!ok || nv !== v) bad(); o[k] = nv; };   // estrito: conta se mudou
-    const Pnum = (o, k, lo, hi, def) => { const v = o[k], ok = Number.isFinite(v); if (!ok) bad(); o[k] = ok ? Math.max(lo, Math.min(hi, v)) : def; };                        // folgado: só conta se não for número
-    const clampInt = (v, def, lo, hi) => Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.floor(v))) : def;
-    const objOf = (v, keys, def) => { if (!isObj(v)) { bad(); v = Object.assign({}, def); } return Object.fromEntries(keys.map(k => [k, has(v, k) ? v[k] : def[k]])); };   // só as chaves conhecidas
-    const pairs = (arr, max, okPair) => {
-      if (!Array.isArray(arr)) { bad(); return []; }
-      const out = [];
-      for (const e of arr) { if (out.length >= max) { bad(); break; } if (Array.isArray(e) && okPair(e)) out.push([e[0], e[1]]); else bad(); }
-      return out;
-    };
+    const dflt = newState(), K = SaveManager.kit(), { bad, isObj, has, Pint, Pnum, clampInt, objOf, pairs } = K;      // ferramentas genéricas no save.js; as REGRAS abaixo são do jogo
     const tilePair = e => Number.isInteger(e[0]) && Number.isInteger(e[1]) && inb(e[0], e[1]);
     const posPair = e => Number.isFinite(e[0]) && Number.isFinite(e[1]) && e[0] >= 0 && e[1] >= 0 && e[0] <= MW * TS && e[1] <= MH * TS;
 
@@ -677,20 +613,10 @@
     }
     st.rain = !!st.rain; st.won = !!st.won;
     if (!isObj(st.names)) st.names = {};
-    return repairs;
+    return K.repairs();
   }
-  function parseSave(j) {
-    let s;
-    try { s = JSON.parse(j); } catch (e) { return { status: 'invalid', reason: 'json' }; }
-    if (!s || typeof s !== 'object' || Array.isArray(s)) return { status: 'invalid', reason: 'json' };
-    let v = s.v;
-    if (!Number.isInteger(v) || v < 1) return { status: 'invalid', reason: 'version' };
-    if (v > SAVE_VERSION) return { status: 'invalid', reason: 'future' };
-    while (v < SAVE_VERSION) {
-      try { s = MIGRATIONS[v] ? MIGRATIONS[v](s) : null; } catch (e) { s = null; }
-      if (!s || !(s.v > v)) return { status: 'invalid', reason: 'version' };
-      v = s.v;
-    }
+  // Regras do jogo para transformar um save lido (JÁ migrado pelo SaveManager) em estado: defaults, forma mínima e sanitização (R3).
+  function hydrateState(s) {
     const base = newState();
     const state = Object.assign(base, s, { owned: Object.assign(base.owned, s.owned), seeds: Object.assign(base.seeds, s.seeds), harvest: Object.assign(base.harvest, s.harvest),
       up: Object.assign(base.up, s.up), stat: Object.assign(base.stat, s.stat), names: Object.assign({}, s.names) });
@@ -699,47 +625,16 @@
     if (s.laid === undefined) state.laid = state.min >= Animals.MIDDAY ? 2 : 1;      // save anterior às posturas de meio-dia: não repõe ovos ao carregar
     return { status: 'ok', state, repaired };
   }
-  function listBackups() {            // mais recentes primeiro; a chave antiga (sem data) fica por último
-    const out = [];
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k === BACKUP_KEY || (k && k.startsWith(BACKUP_KEY + '_'))) {
-          const raw = localStorage.getItem(k);
-          out.push({ key: k, ts: k === BACKUP_KEY ? 0 : +k.slice(BACKUP_KEY.length + 1) || 0, raw, info: parseSave(raw) });
-        }
-      }
-    } catch (e) { /* storage indisponível */ }
-    return out.sort((x, y) => y.ts - x.ts);
-  }
-  /* R4 — poda para MAX_BACKUPS cópias sem perder a única cópia que dá para restaurar: descarta primeiro as ILEGÍVEIS (da mais antiga para a
-     mais nova) e só depois as válidas (também da mais antiga); a cópia recém-criada e a cópia VÁLIDA mais recente nunca são descartadas. */
-  function pruneBackups(keepKey) {
-    const all = listBackups(), newestValid = all.find(b => b.info.status === 'ok');      // listBackups: mais recentes primeiro
-    // N1: save de versão FUTURA/desconhecida não é lixo: é progresso de um jogo mais novo que este código não abre (JS antigo em cache). Ordem de descarte:
-    // 0 = ilegível (json/shape) · 1 = válida · 2 = futura/versão desconhecida — dentro de cada grupo, a mais antiga primeiro.
-    const rank = b => b.info.status === 'ok' ? 1 : (b.info.reason === 'future' || b.info.reason === 'version') ? 2 : 0;
-    const victims = all.filter(b => b.key !== keepKey && b !== newestValid).sort((x, y) => rank(x) - rank(y) || x.ts - y.ts);
-    for (let n = all.length; n > MAX_BACKUPS && victims.length; n--) localStorage.removeItem(victims.shift().key);
-  }
-  function backupSave(j) {
-    try {
-      if (listBackups().some(b => b.raw === j)) return true;                    // já guardado (o boot e o "Continuar" leem duas vezes)
-      const key = BACKUP_KEY + '_' + Date.now();
-      localStorage.setItem(key, j);
-      pruneBackups(key);
-      return true;
-    } catch (e) { return false; }                                               // cota cheia: o texto ainda pode ser baixado da tela inicial
-  }
-  function loadSave() {
-    let j;
-    try { j = localStorage.getItem(SAVE_KEY); } catch (e) { return { status: 'none' }; }
-    if (!j) return { status: 'none' };
-    const r = parseSave(j);
-    if (r.status === 'ok') { r.rev = revOfRaw(j); return r.repaired ? Object.assign(r, { backedUp: backupSave(j) }) : r; }      // `rev` do TEXTO lido (N2); corrigido pelo sanitizeState: guarda o ORIGINAL antes
-    return Object.assign(r, { raw: j, backedUp: backupSave(j) });
-  }
-  function restoreBackup(b) { try { localStorage.setItem(SAVE_KEY, b.raw); return true; } catch (e) { return false; } }
+  SaveManager.configure({
+    hydrate: hydrateState,
+    // o que vive FORA de S e precisa ir para o save (o SaveManager chama isto dentro de save(), depois da checagem de rev)
+    prepare(st) {
+      st.obs = obs.map(o => o.type === 'ftree' ? [o.type, o.x, o.y, o.v, o.hp, o.age, o.fruit, o.cd] : [o.type, o.x, o.y, o.v, o.hp]);
+      st.eggList = eggs.map(e => [e.x, e.y]);
+      st.px = P.x; st.py = P.y; st.dir = P.dir;
+    },
+    persist: st => Object.assign({}, st, { crops: persistentCrops(st.crops) }),      // sem pt/pk (animação); o estado vivo não muda
+  });
   function downloadText(name, text) {
     const url = URL.createObjectURL(new Blob([text], { type: 'application/json' })), a = document.createElement('a');
     a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
@@ -766,12 +661,12 @@
       br.textContent = label;
       br.onclick = () => {
         // R5: restaurar grava por cima do principal. Se ele está ilegível e NÃO tem cópia, tenta guardá-la agora; se não couber, só restaura no 2º clique
-        if (bad && found.raw && !forced && !found.backedUp && !backupSave(found.raw)) {
+        if (bad && found.raw && !forced && !found.backedUp && !SaveManager.copies.add(found.raw)) {
           forced = true; br.textContent = 'Restaurar mesmo assim (o save atual será perdido)';
           $('spMsg').textContent = 'Não foi possível guardar uma cópia do save atual (ilegível) antes de restaurar. Baixe-o com "Baixar cópia" ou restaure mesmo assim — o save atual será perdido.';
           return;
         }
-        if (restoreBackup(good)) location.reload(); else $('spMsg').textContent = 'Não foi possível restaurar: o navegador bloqueou o armazenamento.';
+        if (SaveManager.copies.restore(good)) location.reload(); else $('spMsg').textContent = 'Não foi possível restaurar: o navegador bloqueou o armazenamento.';
       };
     }
     $('btnSpClose').onclick = () => sp.classList.add('hidden');
@@ -1400,18 +1295,18 @@
     else if (a === 'resetask') { currentModal = 'reset'; setModal(`<h2>Novo jogo</h2><p>Começar um novo jogo? O jogo atual será substituído (uma cópia de segurança fica guardada neste navegador).</p><div class="modalBtns"><button class="mb red" data-a="reset">Sim, apagar</button><button class="mb" data-a="close">Cancelar</button></div>`); }
     else if (a === 'reset' || a === 'resetforce') {       // R1: guarda cópia do jogo atual ANTES de apagar
       if (a === 'reset') save();                           // inclui o que foi feito desde o último autosave (se esta aba ainda pode salvar)
-      const raw = prevSaveInfo().raw;
-      if (a === 'reset' && raw !== null && !backupSave(raw)) {
+      const raw = SaveManager.peek().raw;
+      if (a === 'reset' && raw !== null && !SaveManager.copies.add(raw)) {
         pendingResetRaw = raw; currentModal = 'reset';
         setModal(`<h2>Novo jogo</h2><p>Não foi possível guardar uma cópia do jogo atual (sem espaço no navegador). Baixe o save antes ou apague mesmo assim.</p>
           <div class="modalBtns"><button class="mb alt" data-a="resetdl">Baixar cópia (.json)</button><button class="mb red" data-a="resetforce">Apagar mesmo assim</button><button class="mb" data-a="close">Cancelar</button></div>`);
-      } else { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* storage indisponível */ } running = false; location.reload(); }
+      } else { SaveManager.removeMain(); running = false; location.reload(); }
     }
     else if (a === 'resetdl') { if (pendingResetRaw !== null) downloadText(saveFileName(), pendingResetRaw); }
     else if (a === 'stalereload') { running = false; location.reload(); }
     else if (a === 'staleuse') {       // R2: assume o controle: guarda o que a outra aba salvou e volta a gravar daqui
-      try { const cur = storedInfo(); if (cur.raw !== null) backupSave(cur.raw); loadedRev = cur.rev === null ? 0 : cur.rev; } catch (e) { /* storage indisponível: save() avisa */ }
-      staleTab = false; staleShown = false; slotKnown = false; const r = save(true); closeModal();       // slotKnown=false: se a outra aba APAGOU o save, esta pode recriá-lo (foi escolha do jogador)
+      SaveManager.session.takeOver();       // guarda o que a outra aba salvou, assume o rev dela e permite recriar um save que ela APAGOU (escolha do jogador)
+      staleShown = false; const r = save(true); closeModal();
       if (r.ok) toast('Esta aba agora salva o jogo. A cópia da outra aba ficou guardada.', 'good');
     }
     updateHud(true);
@@ -1618,7 +1513,7 @@
   /* ---------------- atualização ---------------- */
   function update(dt) {
     time += dt;
-    if (staleTab && !staleShown && !modalOpen && !sleeping) showStaleModal();      // R2: avisa quando der (não por cima de loja/sono)
+    if (SaveManager.session.isStale() && !staleShown && !modalOpen && !sleeping) showStaleModal();      // R2: avisa quando der (não por cima de loja/sono)
     if (!paused) {
       S.min += dt * MIN_PER_SEC;
       if (S.min >= DAY_END) { sleepSequence(true); return; }
@@ -2203,9 +2098,9 @@
 
   function startGame(loadIt, charId, names) {
     Snd.init();
-    const loaded = loadIt ? loadSave() : null;
-    const prev = loadIt ? null : prevSaveInfo();      // jogo novo: o save anterior só é substituído DEPOIS que o jogo novo iniciar (e com cópia)
-    staleTab = false; staleShown = false; slotKnown = false;
+    const loaded = loadIt ? SaveManager.load() : null;
+    const prev = loadIt ? null : SaveManager.peek();      // jogo novo: o save anterior só é substituído DEPOIS que o jogo novo iniciar (e com cópia)
+    SaveManager.session.reset(); staleShown = false;
     S = loaded && loaded.status === 'ok' ? loaded.state : newState();
     if (!loadIt) { S.char = CHARACTERS[charId] ? charId : 'fazendeiro'; }
     if (!CHARACTERS[S.char]) S.char = 'fazendeiro';
@@ -2232,10 +2127,10 @@
     running = true; paused = false; modalOpen = false;
     if (!loadIt || S.day === 1) toast('Bem-vindo à fazenda, ' + CHAR.name + '! 🌾', 'good');
     if (S.rain) toast('🌧️ Hoje está chovendo — as plantas já estão regadas.');
-    if (loadIt) { loadedRev = loaded && loaded.status === 'ok' ? loaded.rev : 0; slotKnown = loaded && loaded.status === 'ok'; if (loaded.repaired) toast('⚠ O save tinha dados inválidos que foram corrigidos. Uma cópia do original ficou guardada.', 'bad'); }
+    if (loadIt) { SaveManager.session.adopt(loaded); if (loaded.repaired) toast('⚠ O save tinha dados inválidos que foram corrigidos. Uma cópia do original ficou guardada.', 'bad'); }
     else {      // R1: jogo novo iniciou — agora sim substitui o save anterior, depois de guardar uma cópia dele
-      if (prev.raw !== null && !backupSave(prev.raw) && !eraseForced) toast('⚠ Não foi possível guardar cópia do jogo anterior (sem espaço no navegador).', 'bad');
-      loadedRev = prev.rev === null ? 0 : prev.rev; save();
+      if (prev.raw !== null && !SaveManager.copies.add(prev.raw) && !eraseForced) toast('⚠ Não foi possível guardar cópia do jogo anterior (sem espaço no navegador).', 'bad');
+      SaveManager.session.startNew(prev); save();
     }
     if (/[?&]debug\b/.test(location.search)) window.__game = { S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
   }
@@ -2275,9 +2170,9 @@
       Art.init(); setCharacter('fazendeiro'); makeCloudSprites();
       $('btnMusic').textContent = Snd.musicOn ? '🎵' : '🔕'; $('btnMute').textContent = Snd.muted ? '🔇' : '🔊';
       status.classList.add('hidden');
-      const found = loadSave(), has = found.status === 'ok', bad = found.status === 'invalid';
+      const found = SaveManager.load(), has = found.status === 'ok', bad = found.status === 'invalid';
       if (has) $('btnContinue').classList.remove('hidden');
-      renderSaveProblem(found, found.status === 'ok' ? null : listBackups().find(b => b.info.status === 'ok'));     // save ilegível, ou ausente com cópia válida
+      renderSaveProblem(found, found.status === 'ok' ? null : SaveManager.copies.list().find(b => b.info.status === 'ok'));     // save ilegível, ou ausente com cópia válida
       // vitrine do título e tela de seleção
       $('titleImg1').src = CHARACTERS.fazendeiro.folder + '/front_walk.png';
       $('titleImg2').src = CHARACTERS.fazendeira.folder + '/front_walk.png';
@@ -2291,9 +2186,9 @@
           catch (e) {
             console.error(e); showSelect(false);
             if (loadIt) {      // R3: o save passou na leitura mas o jogo não conseguiu iniciá-lo: guarda cópia e oferece baixar (recarregar não resolve)
-              let raw = null; try { raw = localStorage.getItem(SAVE_KEY); } catch (e2) { /* storage indisponível */ }
+              const raw = SaveManager.peek().raw;
               fail('Não foi possível iniciar o jogo salvo.');
-              renderSaveProblem({ status: 'invalid', reason: 'start', raw, backedUp: raw !== null && backupSave(raw), detail: e.message }, null);
+              renderSaveProblem({ status: 'invalid', reason: 'start', raw, backedUp: raw !== null && SaveManager.copies.add(raw), detail: e.message }, null);
             } else fail('Não foi possível iniciar o jogo (' + e.message + '). Recarregue a página.');
           }
           $('busy').classList.add('hidden');
@@ -2319,8 +2214,8 @@
         $('confirmNew').classList.remove('hidden');
       };
       $('btnYes').onclick = () => {
-        const raw = prevSaveInfo().raw;
-        if (raw !== null && !eraseForced && !backupSave(raw)) {       // R1: não coube a cópia — oferece baixar antes de apagar
+        const raw = SaveManager.peek().raw;
+        if (raw !== null && !eraseForced && !SaveManager.copies.add(raw)) {       // R1: não coube a cópia — oferece baixar antes de apagar
           eraseForced = true;
           $('confirmMsg').textContent = 'Não foi possível guardar uma cópia do jogo atual (sem espaço no navegador). Baixe o save antes ou apague mesmo assim.';
           $('btnYes').textContent = 'Apagar mesmo assim'; $('btnNewDl').classList.remove('hidden'); $('btnNewDl').onclick = () => downloadText(saveFileName(), raw);
@@ -2329,12 +2224,6 @@
         $('confirmNew').classList.add('hidden'); showSelect(true);
       };
       $('btnNo').onclick = () => { $('confirmNew').classList.add('hidden'); eraseForced = false; };
-      window.addEventListener('storage', e => {       // R2: outra aba gravou o save — esta aba passa a ser a "velha" imediatamente
-        if (!running) return;
-        if (e.key === null || (e.key === SAVE_KEY && e.newValue === null)) { staleTab = true; return; }       // N4: outra aba apagou o save (Novo jogo) ou limpou os dados do site
-        if (e.key !== SAVE_KEY) return;
-        const r = revOfRaw(e.newValue); if (r === null || r !== loadedRev) staleTab = true;
-      });
       window.addEventListener('beforeunload', () => { if (running) save(); });
       window.addEventListener('pagehide', () => { if (running) save(); });       // iOS/celular: beforeunload não é confiável
       document.addEventListener('visibilitychange', () => { if (document.hidden) { if (running) { save(); if (!modalOpen) openMenu(); } Snd.suspend(); } else Snd.resume(); });
