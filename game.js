@@ -543,10 +543,15 @@
      (`loadedRev`); antes de gravar compara com o que está no storage: se for diferente, OUTRA aba salvou depois — esta aba para de salvar
      (staleTab) e pergunta ao jogador (recarregar, ou "usar esta aba" guardando antes uma cópia do que a outra salvou). */
   let loadedRev = 0, staleTab = false, staleShown = false, eraseForced = false;
+  let slotKnown = false;           // N4: esta aba já leu ou gravou um save — se ele sumir do storage, outra aba o apagou (não ressuscitar)
+  /* `rev` de um texto de save: 0 se não houver `rev` válido; null se o texto não é JSON. É a ÚNICA normalização do `rev` (N2): quem LÊ o save
+     (loadedRev), quem confere antes de gravar (storedInfo) e o evento `storage` usam esta função, então nunca divergem (nem com rev 5.5 ou 1e13). */
+  function revOfRaw(raw) {
+    try { const o = JSON.parse(raw); return o && Number.isSafeInteger(o.rev) && o.rev >= 0 ? o.rev : 0; } catch (e) { return null; }
+  }
   function storedInfo() {          // o que está gravado: { raw, rev }; rev === null se o texto não é um save legível. Lança se o storage falhar.
     const raw = localStorage.getItem(SAVE_KEY);
-    if (raw === null) return { raw: null, rev: 0 };
-    try { const o = JSON.parse(raw); return { raw, rev: o && Number.isInteger(o.rev) && o.rev >= 0 ? o.rev : 0 }; } catch (e) { return { raw, rev: null }; }
+    return raw === null ? { raw: null, rev: 0 } : { raw, rev: revOfRaw(raw) };
   }
   const prevSaveInfo = () => { try { return storedInfo(); } catch (e) { return { raw: null, rev: 0 }; } };
   const conflictError = () => { const e = new Error('este jogo foi salvo mais recentemente em outra aba'); e.name = 'Conflict'; return e; };
@@ -558,8 +563,9 @@
     }
     try {
       const cur = storedInfo();
-      if (cur.raw !== null && cur.rev !== null && cur.rev !== loadedRev) {
-        staleTab = true; console.warn('save recusado: rev gravado', cur.rev, '≠ rev desta aba', loadedRev);
+      const gone = cur.raw === null && slotKnown;                 // N4: outra aba apagou o save — esta aba não o ressuscita
+      if (gone || (cur.raw !== null && cur.rev !== null && cur.rev !== loadedRev)) {
+        staleTab = true; console.warn(gone ? 'save recusado: o save foi apagado em outra aba' : 'save recusado: rev gravado', cur.rev, '≠ rev desta aba', loadedRev);
         if (manual === true) toast('⚠ Este jogo foi salvo em outra aba — esta aba não salva mais.', 'bad');
         return { ok: false, error: conflictError() };
       }
@@ -569,7 +575,7 @@
       S.px = P.x; S.py = P.y; S.dir = P.dir;
       S.rev = loadedRev + 1;
       localStorage.setItem(SAVE_KEY, JSON.stringify(Object.assign({}, S, { crops: persistentCrops(S.crops) })));
-      loadedRev = S.rev;
+      loadedRev = S.rev; slotKnown = true;
     } catch (e) {
       console.warn('falha ao salvar', e);
       saveFailing = true;
@@ -581,7 +587,7 @@
   }
   function showStaleModal() {
     staleShown = true; currentModal = 'stale';
-    setModal(`<h2>⚠ Jogo aberto em outra aba</h2><p>Outra aba salvou este jogo <b>depois</b> de você. Para não apagar o progresso dela, <b>esta aba parou de salvar</b>.</p>
+    setModal(`<h2>⚠ Jogo aberto em outra aba</h2><p>Outra aba salvou este jogo <b>depois</b> de você (ou o apagou). Para não desfazer o que ela fez, <b>esta aba parou de salvar</b>.</p>
       <div class="modalBtns"><button class="mb" data-a="stalereload">Recarregar (recomendado)</button><button class="mb alt" data-a="staleuse">Usar esta aba</button></div>
       <p><small>"Usar esta aba" guarda uma cópia do que a outra aba salvou e passa a salvar daqui.</small></p>`);
   }
@@ -706,11 +712,22 @@
     } catch (e) { /* storage indisponível */ }
     return out.sort((x, y) => y.ts - x.ts);
   }
+  /* R4 — poda para MAX_BACKUPS cópias sem perder a única cópia que dá para restaurar: descarta primeiro as ILEGÍVEIS (da mais antiga para a
+     mais nova) e só depois as válidas (também da mais antiga); a cópia recém-criada e a cópia VÁLIDA mais recente nunca são descartadas. */
+  function pruneBackups(keepKey) {
+    const all = listBackups(), newestValid = all.find(b => b.info.status === 'ok');      // listBackups: mais recentes primeiro
+    // N1: save de versão FUTURA/desconhecida não é lixo: é progresso de um jogo mais novo que este código não abre (JS antigo em cache). Ordem de descarte:
+    // 0 = ilegível (json/shape) · 1 = válida · 2 = futura/versão desconhecida — dentro de cada grupo, a mais antiga primeiro.
+    const rank = b => b.info.status === 'ok' ? 1 : (b.info.reason === 'future' || b.info.reason === 'version') ? 2 : 0;
+    const victims = all.filter(b => b.key !== keepKey && b !== newestValid).sort((x, y) => rank(x) - rank(y) || x.ts - y.ts);
+    for (let n = all.length; n > MAX_BACKUPS && victims.length; n--) localStorage.removeItem(victims.shift().key);
+  }
   function backupSave(j) {
     try {
       if (listBackups().some(b => b.raw === j)) return true;                    // já guardado (o boot e o "Continuar" leem duas vezes)
-      localStorage.setItem(BACKUP_KEY + '_' + Date.now(), j);
-      for (const b of listBackups().slice(MAX_BACKUPS)) localStorage.removeItem(b.key);
+      const key = BACKUP_KEY + '_' + Date.now();
+      localStorage.setItem(key, j);
+      pruneBackups(key);
       return true;
     } catch (e) { return false; }                                               // cota cheia: o texto ainda pode ser baixado da tela inicial
   }
@@ -719,7 +736,7 @@
     try { j = localStorage.getItem(SAVE_KEY); } catch (e) { return { status: 'none' }; }
     if (!j) return { status: 'none' };
     const r = parseSave(j);
-    if (r.status === 'ok') return r.repaired ? Object.assign(r, { backedUp: backupSave(j) }) : r;      // corrigido pelo sanitizeState: guarda o ORIGINAL antes
+    if (r.status === 'ok') { r.rev = revOfRaw(j); return r.repaired ? Object.assign(r, { backedUp: backupSave(j) }) : r; }      // `rev` do TEXTO lido (N2); corrigido pelo sanitizeState: guarda o ORIGINAL antes
     return Object.assign(r, { raw: j, backedUp: backupSave(j) });
   }
   function restoreBackup(b) { try { localStorage.setItem(SAVE_KEY, b.raw); return true; } catch (e) { return false; } }
@@ -745,8 +762,17 @@
     ex.classList.toggle('hidden', !(bad && found.raw)); br.classList.toggle('hidden', !good);
     if (bad && found.raw) ex.onclick = () => downloadText(saveFileName(), found.raw);
     if (good) {
-      br.textContent = 'Restaurar cópia (' + backupLabel(good) + ')';
-      br.onclick = () => { if (restoreBackup(good)) location.reload(); else $('spMsg').textContent = 'Não foi possível restaurar: o navegador bloqueou o armazenamento.'; };
+      const label = 'Restaurar cópia (' + backupLabel(good) + ')'; let forced = false;
+      br.textContent = label;
+      br.onclick = () => {
+        // R5: restaurar grava por cima do principal. Se ele está ilegível e NÃO tem cópia, tenta guardá-la agora; se não couber, só restaura no 2º clique
+        if (bad && found.raw && !forced && !found.backedUp && !backupSave(found.raw)) {
+          forced = true; br.textContent = 'Restaurar mesmo assim (o save atual será perdido)';
+          $('spMsg').textContent = 'Não foi possível guardar uma cópia do save atual (ilegível) antes de restaurar. Baixe-o com "Baixar cópia" ou restaure mesmo assim — o save atual será perdido.';
+          return;
+        }
+        if (restoreBackup(good)) location.reload(); else $('spMsg').textContent = 'Não foi possível restaurar: o navegador bloqueou o armazenamento.';
+      };
     }
     $('btnSpClose').onclick = () => sp.classList.add('hidden');
     sp.classList.remove('hidden');
@@ -1385,7 +1411,7 @@
     else if (a === 'stalereload') { running = false; location.reload(); }
     else if (a === 'staleuse') {       // R2: assume o controle: guarda o que a outra aba salvou e volta a gravar daqui
       try { const cur = storedInfo(); if (cur.raw !== null) backupSave(cur.raw); loadedRev = cur.rev === null ? 0 : cur.rev; } catch (e) { /* storage indisponível: save() avisa */ }
-      staleTab = false; staleShown = false; const r = save(true); closeModal();
+      staleTab = false; staleShown = false; slotKnown = false; const r = save(true); closeModal();       // slotKnown=false: se a outra aba APAGOU o save, esta pode recriá-lo (foi escolha do jogador)
       if (r.ok) toast('Esta aba agora salva o jogo. A cópia da outra aba ficou guardada.', 'good');
     }
     updateHud(true);
@@ -2179,7 +2205,7 @@
     Snd.init();
     const loaded = loadIt ? loadSave() : null;
     const prev = loadIt ? null : prevSaveInfo();      // jogo novo: o save anterior só é substituído DEPOIS que o jogo novo iniciar (e com cópia)
-    staleTab = false; staleShown = false;
+    staleTab = false; staleShown = false; slotKnown = false;
     S = loaded && loaded.status === 'ok' ? loaded.state : newState();
     if (!loadIt) { S.char = CHARACTERS[charId] ? charId : 'fazendeiro'; }
     if (!CHARACTERS[S.char]) S.char = 'fazendeiro';
@@ -2206,7 +2232,7 @@
     running = true; paused = false; modalOpen = false;
     if (!loadIt || S.day === 1) toast('Bem-vindo à fazenda, ' + CHAR.name + '! 🌾', 'good');
     if (S.rain) toast('🌧️ Hoje está chovendo — as plantas já estão regadas.');
-    if (loadIt) { loadedRev = S.rev; if (loaded.repaired) toast('⚠ O save tinha dados inválidos que foram corrigidos. Uma cópia do original ficou guardada.', 'bad'); }
+    if (loadIt) { loadedRev = loaded && loaded.status === 'ok' ? loaded.rev : 0; slotKnown = loaded && loaded.status === 'ok'; if (loaded.repaired) toast('⚠ O save tinha dados inválidos que foram corrigidos. Uma cópia do original ficou guardada.', 'bad'); }
     else {      // R1: jogo novo iniciou — agora sim substitui o save anterior, depois de guardar uma cópia dele
       if (prev.raw !== null && !backupSave(prev.raw) && !eraseForced) toast('⚠ Não foi possível guardar cópia do jogo anterior (sem espaço no navegador).', 'bad');
       loadedRev = prev.rev === null ? 0 : prev.rev; save();
@@ -2304,8 +2330,10 @@
       };
       $('btnNo').onclick = () => { $('confirmNew').classList.add('hidden'); eraseForced = false; };
       window.addEventListener('storage', e => {       // R2: outra aba gravou o save — esta aba passa a ser a "velha" imediatamente
-        if (!running || e.key !== SAVE_KEY || e.newValue === null) return;
-        try { const o = JSON.parse(e.newValue); if ((Number.isInteger(o.rev) ? o.rev : 0) !== loadedRev) staleTab = true; } catch (er) { staleTab = true; }
+        if (!running) return;
+        if (e.key === null || (e.key === SAVE_KEY && e.newValue === null)) { staleTab = true; return; }       // N4: outra aba apagou o save (Novo jogo) ou limpou os dados do site
+        if (e.key !== SAVE_KEY) return;
+        const r = revOfRaw(e.newValue); if (r === null || r !== loadedRev) staleTab = true;
       });
       window.addEventListener('beforeunload', () => { if (running) save(); });
       window.addEventListener('pagehide', () => { if (running) save(); });       // iOS/celular: beforeunload não é confiável

@@ -133,6 +133,57 @@
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };
+  /* R4: a poda descarta primeiro as cópias ILEGÍVEIS — a única cópia válida (a mais antiga) tem de sobreviver */
+  S_['poda-copias-validas'] = {
+    seed() {
+      localStorage.clear();
+      localStorage.setItem(BK + '_1000', validSave(1, 10));                                                   // a ÚNICA válida, e a mais antiga
+      for (const t of [2000, 3000, 4000]) localStorage.setItem(BK + '_' + t, '{"lixo' + t + '":');             // 3 ilegíveis, mais novas
+      localStorage.setItem(KEY, '{lixo');                                                                      // o principal ilegível vira a 5ª cópia → poda
+    },
+    async run() {
+      await bootReady();
+      const ks = backups().sort();
+      ok('mantém só 3 cópias', ks.length === 3, ks.join(','));
+      ok('a cópia VÁLIDA (a mais antiga) sobreviveu', ks.includes(BK + '_1000') && localStorage.getItem(BK + '_1000') === validSave(1, 10), ks.join(','));
+      ok('as ilegíveis MAIS ANTIGAS foram podadas (2000, 3000); ficam a 4000 e o principal ilegível', !ks.includes(BK + '_2000') && !ks.includes(BK + '_3000') && ks.includes(BK + '_4000') && ks.some(k => localStorage.getItem(k) === '{lixo'), ks.join(','));
+      ok('"Restaurar" continua oferecido (Dia 1)', vis('btnSpRestore') && $('btnSpRestore').textContent.includes('Dia 1'), $('btnSpRestore').textContent);
+      ok('o principal ilegível não foi alterado', localStorage.getItem(KEY) === '{lixo');
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  /* R5: o principal ilegível NÃO tem cópia (não coube) → "Restaurar" não o sobrescreve no 1º clique. Recarrega a página, então roda duas vezes */
+  S_['restaurar-sem-copia'] = {
+    seed() {
+      if (sessionStorage.getItem('ran') === 'restaurar-sem-copia') return;
+      localStorage.clear();
+      localStorage.setItem(BK + '_5000', validSave(7, 777));
+      localStorage.setItem(KEY, '{lixo' + 'x'.repeat(8000));       // ilegível e MAIOR que a cópia válida (restaurar depois cabe, guardar cópia dele não)
+      fillStorage();
+    },
+    async run() {
+      await bootReady();
+      const big = '{lixo' + 'x'.repeat(8000);
+      if (sessionStorage.getItem('ran') !== 'restaurar-sem-copia') {
+        sessionStorage.setItem('ran', 'restaurar-sem-copia');
+        const nb = backups().length;
+        ok('sem espaço: o principal ilegível não ganhou cópia', nb === 1, nb);
+        ok('"Restaurar" e "Baixar cópia" disponíveis', vis('btnSpRestore') && vis('btnSpExport'));
+        $('btnSpRestore').click();          // SEM esperar: se o jogo restaurar (defeito), a página recarrega logo — as verificações abaixo são síncronas e gravadas antes disso
+        ok('1º clique NÃO sobrescreve o principal ilegível', localStorage.getItem(KEY) === big);
+        ok('avisa que não coube a cópia e o botão vira "Restaurar mesmo assim"', $('spMsg').textContent.includes('Não foi possível guardar uma cópia') && $('btnSpRestore').textContent.includes('mesmo assim'), $('spMsg').textContent + ' | ' + $('btnSpRestore').textContent);
+        ok('sem erros JS (1ª carga)', !window.__errs.length, window.__errs.join('|'));
+        sessionStorage.setItem('first', JSON.stringify(tests));
+        $('btnSpRestore').click(); await wait(3000); return;          // 2º clique: restaura de fato e recarrega
+      }
+      const first = JSON.parse(sessionStorage.getItem('first') || '[]');
+      for (const t of first) tests.push(t);
+      ok('a 1ª carga registrou suas verificações', first.length === 5, first.length);
+      ok('2º clique restaurou: principal = cópia válida', localStorage.getItem(KEY) === validSave(7, 777));
+      ok('Continuar visível e sem aviso', vis('btnContinue') && !vis('saveProblem'));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
   /* restaurar: recarrega a página, então o cenário roda duas vezes (marcador em sessionStorage) */
   S_['restaurar'] = {
     seed() {
@@ -362,6 +413,70 @@
       const o2 = JSON.parse(localStorage.getItem(KEY)); o2.rev += 3; const raw2 = JSON.stringify(o2); localStorage.setItem(KEY, raw2);
       window.dispatchEvent(new StorageEvent('storage', { key: KEY, newValue: raw2, storageArea: localStorage }));
       r = G.save(); ok('evento storage: próximo save recusado e storage intocado', r.ok === false && r.error.name === 'Conflict' && localStorage.getItem(KEY) === raw2);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  const staleVisible = () => !$('modal').classList.contains('hidden') && !!$('modalBox').querySelector('button[data-a=staleuse]');      // visível de verdade (closeModal só esconde; o botão antigo continua no DOM)
+  /* N4 (2ª revisão adversarial): outra aba APAGOU o save ("Novo jogo" da pausa) — esta aba, que continua aberta, não pode ressuscitá-lo */
+  S_['aba-apagada'] = {
+    seed() { localStorage.clear(); localStorage.setItem(KEY, F.save_v1_atual); },
+    async run() {
+      await bootReady(); $('btnContinue').click(); const G = await gameReady();
+      ok('uso normal: grava', G.save().ok && localStorage.getItem(KEY) !== null);
+      localStorage.removeItem(KEY);                                  // "a outra aba" apagou (sem evento storage nesta página)
+      let r = G.save();
+      ok('save() recusado com "Conflict" (não recria o save apagado)', r.ok === false && r.error && r.error.name === 'Conflict', JSON.stringify(r.ok) + ' ' + (r.error && r.error.name));
+      window.dispatchEvent(new Event('pagehide')); G.save(true); G.save();
+      ok('pagehide, Salvar e autosave também não o recriam', localStorage.getItem(KEY) === null);
+      steps(G, 5); await wait(100);
+      ok('aparece o aviso com Recarregar e Usar esta aba', $('modalBox').textContent.includes('outra aba') && staleVisible());
+      $('modalBox').querySelector('button[data-a=staleuse]').click(); await wait(100);
+      ok('"Usar esta aba" recria o save de propósito (escolha do jogador) e os saves voltam', localStorage.getItem(KEY) !== null && G.save().ok);
+      // só o EVENTO storage (newValue null), sem nenhum save(): a aba já vira velha e avisa
+      localStorage.removeItem(KEY); window.dispatchEvent(new StorageEvent('storage', { key: KEY, newValue: null, storageArea: localStorage }));
+      steps(G, 5);          // SÍNCRONO (sem esperar o loop real nem chamar save()): só o evento pode ter marcado a aba como velha
+      ok('evento storage com newValue=null: aviso aparece sem precisar tentar salvar', staleVisible() && localStorage.getItem(KEY) === null);
+      $('modalBox').querySelector('button[data-a=staleuse]').click(); await wait(100);
+      // "limpar dados do site" (storage event com key null)
+      localStorage.clear(); window.dispatchEvent(new StorageEvent('storage', { key: null, newValue: null, storageArea: localStorage }));
+      steps(G, 5);
+      ok('limpar os dados do site (key null) também vira aviso', staleVisible() && localStorage.getItem(KEY) === null);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  /* N2: `rev` fracionário/gigante/de tipo errado não pode gerar "Conflict" falso no 1º save (loadedRev e storedInfo usam a mesma normalização) */
+  S_['rev-estranho'] = {
+    seed() { localStorage.clear(); const o = JSON.parse(F.save_v1_atual); o.rev = 5.5; localStorage.setItem(KEY, JSON.stringify(o)); },
+    async run() {
+      await bootReady(); $('btnContinue').click(); await gameReady();
+      const cases = [[5.5, 1], [1e13, 1e13 + 1], ['7', 1], [-3, 1], [null, 1], [7, 8]];
+      let i = 0;
+      for (const [rev, expected] of cases) {
+        if (i++) { const o = JSON.parse(F.save_v1_atual); o.rev = rev; localStorage.setItem(KEY, JSON.stringify(o)); window.__game.startGame(true); }
+        const G = window.__game, r = G.save(), saved = JSON.parse(localStorage.getItem(KEY)).rev;      // lê o rev JÁ (o autosave do jogo pode gravar de novo durante a espera abaixo)
+        steps(G, 5); await wait(50);
+        ok('rev=' + JSON.stringify(rev) + ': 1º save sem conflito e rev gravado = ' + expected, r.ok === true && saved === expected && !staleVisible(), JSON.stringify(r.ok) + ' ' + (r.error && r.error.name) + ' rev=' + saved);
+      }
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  /* N1: a poda de cópias não descarta o save de versão FUTURA/desconhecida (progresso de um jogo mais novo) antes das cópias válidas */
+  for (const [nm, bad] of [['poda-copia-futura', { v: 99, day: 12, gold: 5000 }], ['poda-copia-versao', { v: 0, day: 12, gold: 5000 }]]) S_[nm] = {
+    seed() {
+      localStorage.clear();
+      localStorage.setItem(BK + '_1000', JSON.stringify(bad));                                                  // a mais ANTIGA e "inválida" para este código
+      localStorage.setItem(BK + '_2000', validSave(2, 20)); localStorage.setItem(BK + '_3000', validSave(3, 30));
+      localStorage.setItem(KEY, validSave(5, 50));
+    },
+    async run() {
+      await bootReady();
+      $('btnNew').click(); await wait(100); $('btnYes').click(); await wait(100);                               // "Novo jogo": a cópia do save atual é a 4ª → poda
+      const ks = backups().sort();
+      ok('mantém só 3 cópias', ks.length === 3, ks.join(','));
+      ok('a cópia do save de versão ' + (bad.v === 99 ? 'futura' : 'desconhecida') + ' SOBREVIVEU', ks.includes(BK + '_1000') && localStorage.getItem(BK + '_1000') === JSON.stringify(bad), ks.join(','));
+      ok('foi descartada a cópia VÁLIDA mais antiga (Dia 2), não a insubstituível', !ks.includes(BK + '_2000'), ks.join(','));
+      ok('a válida mais recente (Dia 3) e a cópia do save atual (Dia 5) estão lá', ks.includes(BK + '_3000') && ks.some(k => localStorage.getItem(k) === validSave(5, 50)), ks.join(','));
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };

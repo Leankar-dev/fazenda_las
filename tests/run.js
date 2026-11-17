@@ -9,11 +9,11 @@ const lib = require('./lib');
 const SCENARIOS = [
   'fixture-pre-carne', 'fixture-atual', 'fixture-minimo', 'fixture-parcial', 'fixture-com-ptpk',          // saves que devem carregar sem NaN
   'fixture-truncado', 'fixture-invalido', 'fixture-futuro', 'fixture-shape', 'fixture-versao',   // saves que devem avisar e ser preservados
-  'rotacao-copias', 'restaurar',                                                       // cópias de segurança
+  'rotacao-copias', 'poda-copias-validas', 'poda-copia-futura', 'poda-copia-versao', 'restaurar', 'restaurar-sem-copia',                                                       // cópias de segurança
   'quota-jogo', 'quota-boot', 'storage-bloqueado',                                     // falhas de gravação (cota REAL cheia, modo privado)
   'salva-eventos', 'pt-pk-fora-do-save',                                               // gatilhos de save e conteúdo gravado
   'novo-jogo-copia', 'novo-jogo-falha', 'novo-jogo-pausa', 'novo-jogo-sem-espaco', 'novo-jogo-rev',   // R1: Novo jogo nunca apaga sem cópia
-  'aba-velha',                                                                         // R2: aba velha não sobrescreve aba nova
+  'aba-velha', 'aba-apagada', 'rev-estranho',                                                                         // R2: aba velha não sobrescreve aba nova
   'hostil-estado', 'hostil-estruturas', 'hostil-crops-obs', 'falha-inicio',            // R3: save válido porém hostil
 ];
 
