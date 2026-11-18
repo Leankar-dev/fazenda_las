@@ -165,6 +165,19 @@ button.mb.red { background: linear-gradient(#e0654a, #a8301a); border-color: #6b
 button.big { font-size: 20px; padding: 10px 24px; }
 button.big:disabled { filter: grayscale(.9) brightness(.85); cursor: wait; }
 button.big.red { background: linear-gradient(#e0654a, #a8301a); border-color: #6b1c0c; }
+/* cartões dos 3 jogos salvos (tela de título): escolhem em qual slot Continuar / Novo jogo / Apagar agem */
+.slotCards { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.slotCard { flex: 1 1 150px; min-width: 140px; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; position: relative;
+  font-family: var(--font); color: var(--ink); cursor: pointer; padding: 8px 10px 8px 58px; min-height: 76px;
+  background: rgba(255, 255, 255, .5); border: 3px solid rgba(92, 58, 28, .35); border-radius: 12px; }
+.slotCard:hover { background: rgba(255, 255, 255, .75); }
+.slotCard.sel { border-color: #2e5a18; background: rgba(127, 191, 74, .35); box-shadow: 0 0 0 2px #7fbf4a; }
+.slotCard.bad { border-color: #a8301a; background: rgba(224, 101, 74, .25); }
+.slotCard b { font-size: 15px; color: var(--wood-d); }
+.slotCard .who { font-weight: bold; font-size: 14px; }
+.slotCard small { font-size: 12px; color: #6b5233; }
+.slotCard img { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); width: 44px; height: 56px; object-fit: contain; }
+.slotCard.empty { color: #6b5233; border-style: dashed; }
 .confirmNew { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; font-weight: bold; }
 .confirmNew span { flex: 1 1 100%; }
 .saveProblem { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; padding: 10px 14px; border: 2px solid #e0654a; border-radius: 12px; background: rgba(168, 48, 26, .28); font-weight: bold; }

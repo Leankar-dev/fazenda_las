@@ -353,6 +353,70 @@ test('slot com texto vazio = ausente: save não cria cópia vazia, copies.add(""
   assert.ok(M.save(goodState()).ok); assert.strictEqual(copiesOf(a).length, 0); assert.strictEqual(M.copies.add(''), true); assert.strictEqual(copiesOf(a).length, 0);
 });
 
+/* ============================ 3 slots (Fase 1c) ============================ */
+const slotKey = n => 'fazenda_las:v2:slot:' + n;
+test('slots: useSlot troca as chaves; cada slot tem o seu rev, bak e envelope (campo slot); o slot 1 não é tocado', () => {
+  const a = mem(), M = mgr(a); assert.strictEqual(M.slot(), 1); assert.strictEqual(K(M).slot, slotKey(1));
+  M.session.adopt({ status: 'none' }); assert.ok(M.save(goodState(1, 11)).ok); const s1 = a.read(slotKey(1));
+  M.useSlot(2); assert.strictEqual(M.slot(), 2); assert.strictEqual(K(M).slot, slotKey(2)); assert.strictEqual(K(M).bak, slotKey(2) + ':bak');
+  M.session.adopt({ status: 'none' }); assert.ok(M.save(goodState(2, 22)).ok); assert.ok(M.save(goodState(2, 23)).ok);
+  assert.strictEqual(a.read(slotKey(1)), s1, 'slot 1 intacto'); const e2 = JSON.parse(a.read(slotKey(2)));
+  assert.strictEqual(e2.slot, 2); assert.strictEqual(e2.rev, 2, 'o rev do slot 2 começa do zero'); assert.ok(a.read(slotKey(2) + ':bak')); assert.strictEqual(a.read(slotKey(1) + ':bak'), null);
+  M.useSlot(1); M.session.adopt(M.load()); assert.ok(M.save(goodState(1, 12)).ok); assert.strictEqual(JSON.parse(a.read(slotKey(1))).rev, 2); assert.strictEqual(JSON.parse(a.read(slotKey(1))).slot, 1);
+  for (const bad of [0, 4, 1.5, '2', null, undefined, NaN]) assert.throws(() => M.useSlot(bad), RangeError, String(bad));
+  assert.strictEqual(M.slot(), 1, 'um slot inválido não muda o slot em uso');
+});
+test('slots(): vazio / ok / inválido; resumo vem do estado SANEADO (não do summary do arquivo); savedAt só se for data de verdade', () => {
+  const a = mem(), M = mgr(a); M.session.adopt({ status: 'none' }); M.save(goodState(5, 500, { names: { fazendeira: 'Ana' } }));
+  const env = JSON.parse(a.read(slotKey(1))); env.summary = { name: '<img src=x onerror=alert(1)>', day: 999, gold: 1e9 }; env.savedAt = 'não é data'; a.m.set(slotKey(1), JSON.stringify(env));
+  a.m.set(slotKey(2), '{lixo');
+  const M2 = mgr(a), l = M2.slots(); assert.strictEqual(l.length, 3);
+  assert.deepStrictEqual(l.map(x => x.status), ['ok', 'invalid', 'empty']); assert.deepStrictEqual(l.map(x => x.slot), [1, 2, 3]);
+  assert.deepStrictEqual(l[0].summary, { char: 'fazendeira', name: 'Ana', day: 5, gold: 500, earned: 40 }, 'resumo do estado, não do envelope adulterado');
+  assert.strictEqual(l[0].savedAt, null, 'savedAt inválido vira null'); assert.strictEqual(l[1].reason, 'json');
+  assert.strictEqual(M2.slot(), 1, 'listar não muda o slot em uso'); assert.strictEqual(a.read(slotKey(2)), '{lixo', 'nada alterado'); assert.ok(copiesOf(a).some(c => c.raw === '{lixo'), 'o ilegível ganhou cópia');
+  M2.session.reset(); M2.session.adopt({ status: 'none' }); const env2 = JSON.parse(a.read(slotKey(1))); env2.savedAt = '2026-11-17T12:00:00.000Z'; a.m.set(slotKey(1), JSON.stringify(env2));
+  assert.strictEqual(mgr(a).slots()[0].savedAt, '2026-11-17T12:00:00.000Z');
+});
+test('slots(): nunca lança (hydrate quebrado = inválido) e o storage bloqueado devolve 3 vazios', () => {
+  const a = mem(), M = mgr(a); M.session.adopt({ status: 'none' }); M.save(goodState());
+  assert.strictEqual(mgr(a, { hydrate() { throw new Error('x'); }, prepare() {}, persist: S => S }).slots()[0].status, 'invalid');
+  const b = mem(), B = mgr(b); b.read = () => { throw new Error('bloqueado'); }; b.write = b.remove = b.keys = b.read;
+  assert.deepStrictEqual(B.slots().map(x => x.status), ['empty', 'empty', 'empty']);
+});
+test('legado é do slot 1: slots() importa nele; carregar o slot 2 não importa; salvar no slot 2 não encerra a importação', () => {
+  const a = mem(); a.m.set('fazenda_leankar_v1', FX('save_v1_atual')); const M = mgr(a);
+  M.useSlot(2); assert.strictEqual(M.load().status, 'none'); assert.strictEqual(a.read(slotKey(1)), null, 'nada foi importado ainda'); assert.strictEqual(a.read(slotKey(2)), null);
+  M.session.adopt({ status: 'none' }); assert.ok(M.save(goodState(2, 2)).ok); assert.ok(!(JSON.parse(a.read(K(M).meta) || '{}').legacyMain), 'gravar no slot 2 não marca o legado como resolvido');
+  const l = mgr(a).slots(); assert.deepStrictEqual(l.map(x => x.status), ['ok', 'ok', 'empty']); assert.ok(l[0].imported); assert.ok(a.read(slotKey(1))); assert.strictEqual(a.read('fazenda_leankar_v1'), FX('save_v1_atual'));
+});
+test('apagar o slot 1 de propósito encerra a importação: o legado (mesmo "corrigido" e não gravado) não ressuscita', () => {
+  const a = mem(), o = JSON.parse(FX('save_v1_atual')); o.lixo = 1; a.m.set('fazenda_leankar_v1', JSON.stringify(o));
+  const M = mgr(a), r = M.load(); assert.ok(r.repaired); assert.strictEqual(a.read(slotKey(1)), null);
+  M.removeMain(); assert.strictEqual(mgr(a).load().status, 'none'); assert.deepStrictEqual(mgr(a).slots().map(x => x.status), ['empty', 'empty', 'empty']);
+  const b = mem(); b.m.set('fazenda_leankar_v1', FX('save_v1_atual')); const M2 = mgr(b); M2.useSlot(3); M2.removeMain();
+  assert.ok(mgr(b).load().imported, 'apagar o slot 3 não mexe no legado do slot 1');
+});
+test('lastSlot: gravado ao iniciar uma partida (Continuar ou Novo), ignorado se inválido', () => {
+  const a = mem(), M = mgr(a); assert.strictEqual(M.lastSlot(), null);
+  M.useSlot(3); M.session.startNew(M.peek()); assert.strictEqual(M.lastSlot(), 3);
+  M.useSlot(2); M.session.adopt({ status: 'none' }); assert.strictEqual(M.lastSlot(), 2);
+  a.m.set(K(M).meta, JSON.stringify({ lastSlot: 9 })); assert.strictEqual(mgr(a).lastSlot(), null); a.m.set(K(M).meta, JSON.stringify({ lastSlot: '2' })); assert.strictEqual(mgr(a).lastSlot(), null);
+});
+test('external(): só o evento do slot em uso marca a aba como velha (o de outro slot é ignorado); limpar dados vale para todos', () => {
+  const a = mem(), M = mgr(a); M.useSlot(2); M.session.adopt({ status: 'none' }); M.save(goodState());
+  M.external(slotKey(1), envText(M, goodState(), 9)); assert.ok(!M.session.isStale(), 'outro slot');
+  M.external(slotKey(1), null); assert.ok(!M.session.isStale());
+  M.external(slotKey(2), envText(M, goodState(), 9)); assert.ok(M.session.isStale());
+  const b = mem(), N = mgr(b); N.useSlot(3); N.session.adopt({ status: 'none' }); N.external(null, null); assert.ok(N.session.isStale());
+});
+test('useSlot começa sessão limpa: aba velha de um slot não contamina o outro; cópias são compartilhadas', () => {
+  const a = mem(), M = mgr(a); M.session.adopt({ status: 'none' }); M.save(goodState()); a.m.set(slotKey(1), envText(M, goodState(9, 9), 7));
+  assert.ok(!M.save(goodState()).ok && M.session.isStale());
+  M.useSlot(2); assert.ok(!M.session.isStale()); M.session.adopt({ status: 'none' }); assert.ok(M.save(goodState()).ok);
+  M.copies.add('{x'); M.useSlot(1); assert.strictEqual(M.copies.list().length, 1, 'as cópias não são por slot');
+});
+
 /* ============================ fixtures v2 (se já geradas) ============================ */
 test('fixtures v2 do repositório: ok carrega sem cópia; crc errado é recusado (e o crc é o FNV-1a de referência)', () => {
   const okp = path.join(__dirname, 'fixtures', 'save_v2_ok.json'); assert.ok(fs.existsSync(okp), 'fixture ausente: rode node tests/make-fixtures.js');

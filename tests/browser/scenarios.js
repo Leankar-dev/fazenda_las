@@ -18,6 +18,9 @@
        T.removeMain()                  apaga slot + bak + tmp ("outra aba apagou")
        T.setBak(raw) / T.readBak() / T.setTmp(raw) / T.readTmp()   versão anterior e escrita em andamento
        T.isMainKey(k)                  k é a chave do slot? (para contar gravações em Storage.prototype.setItem)
+       — os 3 slots (Fase 1c; os helpers acima agem sempre no SLOT 1) —
+       T.slotRaw(n) / T.slotState(n) / T.slotEnv(n)   texto / estado / envelope do slot n (1–3) · T.setSlot(n, raw) / T.setSlotState(n, st) → raw   grava no slot n
+       T.removeSlot(n)                 apaga slot n + bak + tmp · T.lastSlot()   o último slot jogado (meta) ou null
        — cópias de segurança —
        T.copies()                      [{ key, ts, raw, state }], da mais antiga para a mais nova (ts 0 = a mais antiga possível)
        T.copyRaw(ts) / T.seedCopy(ts, raw)   (ts null = 0)
@@ -38,10 +41,11 @@
     const parse = raw => { try { return JSON.parse(raw); } catch (e) { return null; } };
     const stateOf = raw => { const o = raw === null ? null : parse(raw); if (!o || typeof o !== 'object') return null; return o.magic === MAGIC ? Object.assign({}, o.data, { rev: o.rev }) : o; };
     const minimal = (day, gold) => ({ day, gold, min: 400, soil: new Array(46 * 34).fill(0), crops: {} });
-    const wrapState = st => {           // savedAt FIXO: o mesmo estado gera sempre o mesmo texto (semeado numa carga, comparado depois de recarregar a página)
+    const wrapState = (st, slot = 1) => {           // savedAt FIXO: o mesmo estado gera sempre o mesmo texto (semeado numa carga, comparado depois de recarregar a página)
       const d = Object.assign({}, st), rev = d.rev === undefined ? 0 : d.rev; delete d.rev; delete d.v;
-      return JSON.stringify(Object.assign(SaveManager.format.wrap(d, 1, rev), { savedAt: '2026-01-01T00:00:00.000Z' }));
+      return JSON.stringify(Object.assign(SaveManager.format.wrap(d, slot, rev), { savedAt: '2026-01-01T00:00:00.000Z' }));
     };
+    const SK = n => 'fazenda_las:v2:slot:' + n;
     const get = k => localStorage.getItem(k), set = (k, v) => localStorage.setItem(k, v);
     return {
       reset: () => localStorage.clear(),
@@ -54,6 +58,10 @@
       setMain: raw => set(SLOT, raw),
       setMainState: st => { const raw = wrapState(st); set(SLOT, raw); return raw; },
       removeMain: () => { for (const k of [SLOT, BAK, TMP]) localStorage.removeItem(k); },
+      slotRaw: n => get(SK(n)), slotState: n => stateOf(get(SK(n))), slotEnv: n => { const o = parse(get(SK(n))); return o && o.magic === MAGIC ? o : null; },
+      setSlot: (n, raw) => set(SK(n), raw), setSlotState: (n, st) => { const raw = wrapState(st, n); set(SK(n), raw); return raw; },
+      removeSlot: n => { for (const k of [SK(n), SK(n) + ':bak', SK(n) + ':tmp']) localStorage.removeItem(k); },
+      lastSlot: () => { const m = parse(get(META)); return m ? m.lastSlot || null : null; },
       setBak: raw => set(BAK, raw), readBak: () => get(BAK), setTmp: raw => set(TMP, raw), readTmp: () => get(TMP),
       copies: () => Object.keys(localStorage).filter(k => k.startsWith(COPY))
         .map(k => { const raw = get(k); return { key: k, ts: +k.slice(COPY.length) || 0, raw, state: stateOf(raw) }; }).sort((a, b) => a.ts - b.ts),
@@ -87,10 +95,12 @@
     let n = 0; while ($('btnNew').disabled && n++ < 1200) await wait(100);
     if ($('btnNew').disabled) throw new Error('boot travado: ' + $('loadTxt').textContent + ' | ' + window.__errs.join('|'));
   }
-  async function gameReady() {
+  async function gameReady(keepPaused) {
     let n = 0; while (!window.__game && n++ < 3000) await wait(100);
     if (!window.__game) throw new Error('jogo não iniciou: ' + window.__errs.join('|'));
-    await wait(200); return window.__game;
+    await wait(200);
+    if (!keepPaused && !$('modal').classList.contains('hidden')) window.__game.closeModal();      // "Continuar" começa PAUSADO (menu aberto); os cenários jogam, então fecham o menu
+    return window.__game;
   }
   // O início do jogo (botão → rAF → setTimeout) depende de um quadro REAL do headless, e o tempo virtual corre bem mais rápido que o real:
   // o quadro chega quando quer (de 30 s a nunca, em tempo virtual). Os cenários em que o jogo NÃO inicia (e portanto nunca chegam ao loop de
@@ -771,6 +781,186 @@
       steps(G, 20); G.P.x = 9 * 64; G.P.y = 7 * 64;
       const r = G.save(); ok('gravou', r === undefined || r.ok === true);       // o save() antigo não devolvia nada
       data = { raw: T.readMain() || T.readLegacy() };
+    },
+  };
+
+  /* ---------- Fase 1c: 3 slots ---------- */
+  const card = n => document.querySelector('.slotCard[data-slot="' + n + '"]');
+  const cardText = n => card(n).textContent;
+  const clickCard = async n => { card(n).click(); await wait(100); };
+  const sel = () => [...document.querySelectorAll('.slotCard.sel')].map(c => +c.dataset.slot);
+  const diff = (a, b, p = 'S', out = []) => {          // caminhos em que a e b diferem
+    if (a === b) return out;
+    if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) { out.push(p); return out; }
+    for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) diff(a[k], b[k], p + '.' + k, out);
+    return out;
+  };
+
+  S_['slots-cartoes'] = {          // 3 cartões: ok / ilegível / vazio; escolher um cartão troca os botões e o aviso; nada é alterado
+    seed() { T.reset(); T.setSlot(1, validSave(5, 500)); T.setSlot(2, '{lixo'); },
+    async run() {
+      await bootReady(); const raw1 = T.slotRaw(1);
+      ok('3 cartões', document.querySelectorAll('.slotCard').length === 3);
+      ok('cartão 1: Dia 5 e 500', cardText(1).includes('Dia 5') && cardText(1).includes('500'), cardText(1));
+      ok('cartão 2: save ilegível', cardText(2).includes('ilegível'), cardText(2)); ok('cartão 3: vazio', cardText(3).includes('Vazio'), cardText(3));
+      ok('abre no 1º jogo existente (cartão 1 selecionado, aria-pressed)', sel().join() === '1' && card(1).getAttribute('aria-pressed') === 'true' && card(2).getAttribute('aria-pressed') === 'false');
+      ok('slot 1: Continuar e Apagar visíveis, sem aviso', vis('btnContinue') && vis('btnDelete') && !vis('saveProblem'));
+      await clickCard(2);
+      ok('slot 2 (ilegível): aviso visível, sem Continuar, com Apagar e Baixar', sel().join() === '2' && vis('saveProblem') && !vis('btnContinue') && vis('btnDelete') && vis('btnSpExport'));
+      ok('o aviso é do slot 2: "corrompido"', $('spMsg').textContent.includes('corrompido'), $('spMsg').textContent);
+      ok('o ilegível ganhou 1 cópia; o slot 2 não foi alterado', T.copies().length === 1 && T.copies()[0].raw === '{lixo' && T.slotRaw(2) === '{lixo');
+      await clickCard(3);
+      ok('slot 3 (vazio): sem aviso (há outros jogos), sem Continuar, sem Apagar', sel().join() === '3' && !vis('saveProblem') && !vis('btnContinue') && !vis('btnDelete'));
+      $('btnNew').click(); await wait(100);
+      ok('Novo jogo num slot vazio vai direto à escolha do personagem (sem confirmar)', vis('charSelect') && !vis('confirmNew'));
+      $('btnBack').click(); await clickCard(1);
+      ok('voltar ao slot 1: Continuar de volta, slot 1 intacto', vis('btnContinue') && T.slotRaw(1) === raw1);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['slots-nome-hostil'] = {          // o cartão mostra o nome de um arquivo de terceiros SEM interpretar HTML
+    seed() {
+      T.reset(); window.__xss = undefined;
+      T.setSlotState(1, Object.assign(T.fixtureState('save_v1_atual'), { char: 'fazendeiro', names: { fazendeiro: '<img src=x onerror="window.__xss=1">Zé', fazendeira: 'Ana' } }));
+      const raw = T.slotRaw(1), env = JSON.parse(raw); env.summary = { name: '<img src=x onerror="window.__xss=2">', day: '<b>9</b>', gold: '<i>1</i>' }; T.setSlot(1, JSON.stringify(env));
+    },
+    async run() {
+      await bootReady(); await wait(300);
+      ok('o cartão 1 existe e mostra o save', cardText(1).includes('Dia'), cardText(1));
+      ok('nenhum <img> do arquivo virou elemento (só o retrato do personagem)', [...card(1).querySelectorAll('img')].every(i => /front_walk\.png$/.test(i.getAttribute('src'))), card(1).innerHTML);
+      ok('nenhum <b>/<i> do arquivo virou elemento', !card(1).querySelector('i') && card(1).querySelectorAll('b').length === 1, card(1).innerHTML);
+      ok('o script do nome NÃO rodou', window.__xss === undefined, window.__xss);
+      ok('o texto do cartão não tem "<"', !cardText(1).includes('<'), cardText(1));
+      ok('o resumo adulterado do arquivo foi ignorado (dia vem do estado)', !cardText(1).includes('9') || cardText(1).includes('Dia ' + T.slotState(1).day), cardText(1));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['slots-independentes'] = {          // o jogo do slot 2 carrega, grava SÓ no slot 2 e vira o "último jogado"
+    seed() { T.reset(); T.setSlotState(2, Object.assign(T.fixtureState('save_v1_atual'), { day: 7, gold: 700 })); },
+    async run() {
+      await bootReady();
+      ok('com só o slot 2 salvo, ele já vem selecionado', sel().join() === '2' && vis('btnContinue'), sel().join());
+      ok('slots 1 e 3 vazios', cardText(1).includes('Vazio') && cardText(3).includes('Vazio'));
+      $('btnContinue').click(); const G = await gameReady(true);
+      ok('carregou o jogo do slot 2 (dia 7, ouro 700)', G.S.day === 7 && G.S.gold === 700, G.S.day + '/' + G.S.gold);
+      ok('o título da aba é sempre "FAZENDA LAS" (sem o nome do personagem)', document.title === 'FAZENDA LAS', document.title);
+      G.closeModal(); G.S.gold = 811; const r = G.save(); ok('salvou', r.ok);
+      ok('gravou no slot 2 (envelope com slot=2, ouro 811)', T.slotEnv(2).slot === 2 && T.slotState(2).gold === 811 && T.slotState(2).rev >= 1, JSON.stringify(T.slotEnv(2) && T.slotEnv(2).slot));
+      ok('slots 1 e 3 continuam vazios', T.slotRaw(1) === null && T.slotRaw(3) === null);
+      ok('o slot 2 é o último jogado (meta)', T.lastSlot() === 2, T.lastSlot());
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['slots-novo-em-outro'] = {          // Novo jogo num slot vazio não toca no jogo do slot 1 (nem cria cópia)
+    seed() { T.reset(); T.setSlot(1, validSave(5, 500)); },
+    async run() {
+      await bootReady(); const raw1 = T.slotRaw(1);
+      await clickCard(2); $('btnNew').click(); await wait(100);
+      ok('slot vazio: vai direto à escolha', vis('charSelect')); document.querySelectorAll('.charCard')[1].click(); const G = await gameReady();
+      ok('jogo novo iniciou (dia 1, fazendeira)', G.S.day === 1 && G.S.char === 'fazendeira', G.S.day + '/' + G.S.char);
+      const r = G.save(true); ok('salvou', r.ok);
+      ok('gravou no slot 2 (slot=2, dia 1)', T.slotEnv(2) && T.slotEnv(2).slot === 2 && T.slotState(2).day === 1);
+      ok('o jogo do slot 1 está BYTE a BYTE igual', T.slotRaw(1) === raw1);
+      ok('nenhuma cópia (não havia nada a substituir)', T.copies().length === 0, T.copies().length);
+      ok('o slot 2 é o último jogado', T.lastSlot() === 2);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['slots-apagar'] = {          // Apagar guarda cópia antes, pede confirmação, só mexe no slot escolhido; vale também para um slot ilegível
+    seed() { T.reset(); T.setSlot(1, validSave(5, 500)); T.setSlot(2, validSave(6, 600)); T.setSlot(3, '{lixo'); },
+    async run() {
+      await bootReady(); const raw1 = T.slotRaw(1), raw2 = T.slotRaw(2), raw3 = T.slotRaw(3);
+      await clickCard(2); $('btnDelete').click(); await wait(100);
+      ok('pede confirmação citando o Jogo 2 e a cópia', vis('confirmDel') && $('delMsg').textContent.includes('Jogo 2') && $('delMsg').textContent.includes('cópia'), $('delMsg').textContent);
+      ok('nada foi apagado ainda', T.slotRaw(2) === raw2);
+      $('btnDelNo').click(); await wait(50); ok('Cancelar fecha a confirmação e mantém o jogo', !vis('confirmDel') && T.slotRaw(2) === raw2);
+      $('btnDelete').click(); await wait(50); $('btnDelYes').click(); await wait(150);
+      ok('slot 2 apagado', T.slotRaw(2) === null && T.slotRaw(2 + ':bak') === null);
+      ok('ficou uma cópia idêntica ao jogo apagado', T.copies().some(c => c.raw === raw2), T.copies().length);
+      ok('slots 1 e 3 intactos', T.slotRaw(1) === raw1 && T.slotRaw(3) === raw3);
+      ok('cartão 2 agora é "Vazio" e a confirmação fechou', cardText(2).includes('Vazio') && !vis('confirmDel') && !vis('btnDelete'));
+      await clickCard(3); ok('o slot ilegível também pode ser apagado (Apagar visível)', vis('btnDelete') && vis('saveProblem'));
+      $('btnDelete').click(); await wait(50);
+      ok('mensagem do ilegível', $('delMsg').textContent.includes('não pôde ser lido'), $('delMsg').textContent);
+      $('btnDelYes').click(); await wait(150);
+      ok('slot 3 apagado e o texto ilegível está numa cópia', T.slotRaw(3) === null && T.copies().some(c => c.raw === '{lixo'));
+      ok('slot 1 continua intacto', T.slotRaw(1) === raw1);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['slots-apagar-sem-espaco'] = {          // a cópia não cabe: avisa, oferece baixar e só apaga no 2º clique
+    seed() { T.reset(); T.setSlot(1, validSave(5, 500)); T.setSlot(2, validSave(6, 600)); fillStorage(); },
+    async run() {
+      await bootReady(); const raw2 = T.slotRaw(2); await clickCard(2);
+      $('btnDelete').click(); await wait(50); $('btnDelYes').click(); await wait(100);
+      ok('avisa que NÃO coube a cópia e oferece baixar', $('delMsg').textContent.includes('Não foi possível guardar uma cópia') && $('btnDelYes').textContent === 'Apagar mesmo assim' && vis('btnDelDl'), $('delMsg').textContent);
+      ok('nada foi apagado e nenhuma cópia criada', T.slotRaw(2) === raw2 && T.copies().length === 0);
+      $('btnDelDl').click(); await wait(100); $('btnDelYes').click(); await wait(150);
+      ok('só no 2º clique apaga', T.slotRaw(2) === null && T.slotRaw(1) !== null);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['continuar-pausado'] = {          // "Continuar" abre o jogo PAUSADO (menu aberto): o tempo só corre depois de fechar
+    seed() { T.reset(); T.setMain(validSave(3, 300)); },
+    async run() {
+      await bootReady(); $('btnContinue').click(); const G = await gameReady(true);
+      ok('o menu de pausa está aberto', vis('modal') && $('modalBox').textContent.includes('Pausa'), $('modalBox').textContent.slice(0, 30));
+      ok('o menu tem "Trocar de jogo"', !!$('modalBox').querySelector('[data-a=switchslot]'));
+      const m0 = G.S.min; await wait(1500); steps(G, 60);
+      ok('com o menu aberto o relógio do jogo NÃO anda', G.S.min === m0, m0 + ' → ' + G.S.min);
+      G.closeModal(); steps(G, 60);
+      ok('fechado o menu, o tempo volta a correr', G.S.min > m0, m0 + ' → ' + G.S.min);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['legado-vai-para-slot1'] = {          // legado + jogo no slot 2: o legado vira o slot 1 e o slot 2 não muda
+    seed() { T.reset(); T.setLegacy(validLegacy()); T.setSlot(2, validSave(9, 900)); },
+    async run() {
+      await bootReady(); const raw2 = T.slotRaw(2);
+      ok('slot 1 importado do legado (schema 2, slot=1, dia 4)', T.slotEnv(1) && T.slotEnv(1).slot === 1 && T.slotState(1).day === 4, T.slotRaw(1) && T.slotRaw(1).slice(0, 60));
+      ok('cartões: 1 = Dia 4, 2 = Dia 9, 3 vazio', cardText(1).includes('Dia 4') && cardText(2).includes('Dia 9') && cardText(3).includes('Vazio'));
+      ok('slot 2 intacto e o legado também', T.slotRaw(2) === raw2 && T.readLegacy() === validLegacy());
+      ok('abre no slot 1 (primeiro com jogo)', sel().join() === '1');
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  function validLegacy() { return T.validLegacyRaw(4, 400); }
+  /* E2E com RECARGA REAL: novo jogo no slot 2 → jogar → "Trocar de jogo" (salva e recarrega) → o título abre no slot 2 → Continuar →
+     o estado carregado é IGUAL, campo a campo, ao que estava gravado. A fase 1 guarda o que precisa no sessionStorage (sobrevive à recarga). */
+  S_['e2e-recarrega'] = {
+    seed() { if (sessionStorage.getItem('e2e_before')) return; T.reset(); },
+    async run() {
+      if (!sessionStorage.getItem('e2e_before')) {          // ---- fase 1 ----
+        await bootReady(); await clickCard(2);
+        const G = await startNew(1), S = G.S, A = G.Animals;
+        S.gold = 1234; S.earned = 2500; S.goal = 1; S.up.basket = 1; S.eggs = 4; S.stone = 3; S.wood = 5; S.milk = 2; S.seeds.tomate = 6; S.harvest.cenoura = 3; S.names.fazendeira = 'Maria';
+        for (const k of ['vaca', 'porco']) { while (S.owned[k] < 2) { S.owned[k]++; A.add(k); } }
+        for (let x = 6; x <= 11; x++) for (let y = 8; y <= 9; y++) { S.soil[y * G.MW + x] = 2; S.crops[x + ',' + y] = { t: x % 2 ? 'cenoura' : 'tomate', age: 1 + (x % 3) }; }
+        for (let i = 0; i < 2; i++) G.endDay(false);
+        steps(G, 30); G.P.x = 9 * 64; G.P.y = 7 * 64; G.openMenu();            // pausa: o relógio não anda entre salvar e recarregar
+        const r = G.save(); ok('fase 1: jogo novo no slot 2 jogado e salvo', r.ok && T.slotEnv(2).slot === 2 && T.slotRaw(1) === null);
+        const before = T.slotState(2); ok('fase 1: dia ≥ 3, ouro 1234, 12 plantas', before.day >= 3 && before.gold === 1234 && Object.keys(before.crops).length === 12, before.day + '/' + before.gold);
+        sessionStorage.setItem('e2e_before', JSON.stringify(before)); sessionStorage.setItem('e2e_tests', JSON.stringify(tests));
+        $('modalBox').querySelector('[data-a=switchslot]').click();            // salva de novo e recarrega a página
+        await wait(3000); ok('fase 1: a página NÃO recarregou (esperado recarregar)', false);
+        return;
+      }
+      // ---- fase 2 (página recarregada) ----
+      for (const t of JSON.parse(sessionStorage.getItem('e2e_tests'))) tests.push(t);
+      const before = JSON.parse(sessionStorage.getItem('e2e_before')); delete before.rev;
+      await bootReady();
+      ok('fase 2: o título abriu no slot 2 (último jogado) com Continuar', sel().join() === '2' && vis('btnContinue') && cardText(2).includes('Maria'), sel().join() + ' | ' + cardText(2));
+      $('btnContinue').click(); const G = await gameReady(true);
+      ok('fase 2: começou pausado', vis('modal'));
+      ok('fase 2: o título da aba continua "FAZENDA LAS" mesmo com o personagem renomeado para Maria', document.title === 'FAZENDA LAS', document.title);
+      const d = diff(before, JSON.parse(JSON.stringify(G.S))); ok('fase 2: estado carregado IDÊNTICO ao gravado (campo a campo)', d.length === 0, d.slice(0, 8).join(', '));
+      const r = G.save(); ok('fase 2: salvar de novo funciona', r.ok);
+      const after = T.slotState(2); const rev = after.rev; delete after.rev;
+      const d2 = diff(before, after); ok('fase 2: e o que foi regravado continua idêntico', d2.length === 0, d2.slice(0, 8).join(', '));
+      ok('fase 2: o rev do slot só sobe (≥ 2)', rev >= 2, rev);
+      ok('fase 2: o slot 1 nunca foi criado', T.slotRaw(1) === null);
+      sessionStorage.removeItem('e2e_before'); sessionStorage.removeItem('e2e_tests');
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };
 

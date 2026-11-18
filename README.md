@@ -33,6 +33,12 @@ Arar → plantar → regar → (depois das 18:00) dormir na porta do celeiro →
 Pedras e tocos saem com a picareta; mato com o forcado; ovos das galinhas valem dinheiro.
 Dias de chuva regam tudo sozinhos. O progresso é salvo automaticamente (localStorage).
 
+## Jogos salvos (3 slots)
+A tela inicial mostra **3 cartões de jogo** (personagem, nome, dia, ouro e há quanto tempo foi salvo). Escolha um cartão e use **Continuar**, **Novo jogo** ou **Apagar**; um cartão vazio só aceita Novo jogo. Os 3 jogos são independentes. A tela abre no último jogo que você jogou.
+- **Continuar** abre o jogo **pausado** (menu de pausa aberto): feche com **Esc** ou **Continuar** quando estiver pronto.
+- **Esc → Trocar de jogo** salva e volta à tela inicial para escolher outro cartão.
+- **Apagar** e **Novo jogo** sobre um jogo existente guardam antes uma cópia de segurança neste navegador (as 3 mais recentes, de todos os jogos); se não couber, o jogo oferece baixar o arquivo antes.
+
 ## Arquivos
 - `assets/fazendeiro/` – sprites do Elias (recortados de `docs/imagem_fazendeiro.jpeg`)
 - `assets/fazendeira/` – sprites da Karen (recortados de `docs/imagem_fazendeira.jpeg`, inclui os chapéus)
@@ -52,4 +58,4 @@ Animações: sombras de nuvens, vento nas árvores/mato, borboletas, pássaros, 
 - Ovos: 1ª postura ao amanhecer, 2ª às 13:00. Carne do porco: 1ª ao amanhecer, 2ª a partir das 13:00.
 - Mato novo nasce toda noite, mas há um limite (70) e ele não aparece no curral, no galinheiro nem sobre ovos/trufas/tesouros.
 - Para depurar no console, abra o jogo com `?debug` na URL (expõe `window.__game`).
-- Se um save não for reconhecido, ele é copiado para a chave `fazenda_leankar_v1_backup` do `localStorage` antes de qualquer sobrescrita.
+- Se um save não for reconhecido, ele é copiado para uma cópia de segurança (`fazenda_las:v2:copy:<data>` no `localStorage`) antes de qualquer sobrescrita. Os saves das versões anteriores (`fazenda_leankar_*`) são importados para o jogo 1 e nunca apagados.

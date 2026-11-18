@@ -4,8 +4,10 @@
    Único lugar do projeto que fala com `localStorage` (pelo adaptador no fim do arquivo).
 
    FASE 1b: formato v2 (envelope com `crc`), chaves `fazenda_las:v2:*`, escrita segura (tmp → verificar → bak → slot), leitura com
-   fallback (slot → bak → tmp) e migração do legado `fazenda_leankar_*` (que NUNCA é apagado). Continua 1 slot (o slot 1); os 3 slots
-   e a interface deles são a Fase 1c.
+   fallback (slot → bak → tmp) e migração do legado `fazenda_leankar_*` (que NUNCA é apagado).
+   FASE 1c: 3 SLOTS. O manager trabalha sempre no slot EM USO (`useSlot(n)`, começa no 1): load/save/peek/removeMain/copies.restore/external
+   valem para ele, então o código de uma partida é o mesmo com 1 ou 3 slots. `slots()` lista os três para os cartões da tela de título.
+   O legado (`fazenda_leankar_*`) só é importado para o slot 1. As cópias de segurança são de todos os slots (máx. 3 no total).
 
    Duas camadas (decisão D5):
      • AQUI (genérico, testável em Node com um adaptador falso — tests/save.test.js): envelope/crc, versões e migrações, escrita segura,
@@ -15,7 +17,7 @@
          prepare(S)     copia para S o que vive fora dele (obstáculos, ovos, posição) — roda dentro do save, depois da checagem de `rev`
          persist(S)     devolve o objeto a serializar (sem estado transitório como `pt`/`pk`)
 
-   Formato v2 (uma chave por slot):
+   Formato v2 (uma chave por slot: `fazenda_las:v2:slot:N`, N = 1–3):
      { magic:'fazenda_las-save', schema:2, app, slot, rev, savedAt, summary:{char,name,day,gold,earned}, data:{…estado…}, crc }
      `crc` = FNV-1a 32 bits de JSON.stringify(data): detecta corrupção/truncamento, NÃO é segurança. `v` e `rev` NÃO ficam em `data`.
    Formato v1 (legado): o estado "solto" com `v:1` e `rev` no topo. Ainda é LIDO (slot, cópias e chaves antigas), nunca mais gravado.
@@ -24,10 +26,14 @@
      configure(rules) · kit() · deepMerge(defaults, save) · SCHEMA · format { MAGIC, wrap, inspect, fnv1a, keys }
      load()            → { status:'none' } | { status:'ok', state, repaired, rev, backedUp?, recovered?, imported?, persisted? }
                          | { status:'invalid', reason, raw, backedUp }      reason: json · crc · future · version · shape
+     useSlot(n)        muda o slot em uso (1–3) e começa uma sessão limpa · slot() o slot em uso · SLOTS = 3
+     slots()           → [{ slot, status:'empty'|'ok'|'invalid', summary?, savedAt?, rev?, repaired?, recovered?, reason? }] dos 3 slots (nunca lança;
+                         mesmos efeitos do load(): importa o legado no slot 1, guarda cópia do que estiver ilegível). `summary` vem do estado SANEADO.
+     lastSlot()        o último slot jogado (gravado ao iniciar uma partida) ou null
      peek()            → { raw, rev } do que está gravado no slot (nunca lança)
      save(S)           → { ok:true } | { ok:false, error }   error.name: 'Conflict' (outra aba salvou/apagou depois) · 'FutureSchema' (o slot tem
                          um save de versão mais nova: nunca é sobrescrito) · erro do storage (cota, bloqueio)
-     removeMain()      apaga slot + bak + tmp (o legado e as cópias ficam)
+     removeMain()      apaga slot + bak + tmp (o legado e as cópias ficam); no slot 1 também encerra a importação do legado (não ressuscita)
      copies            list() · add(raw) → bool · restore(cópia) → bool
      session           reset() · adopt(loaded) · startNew(prev) · takeOver() · isStale()
      cfg               load() · save(obj)           (música/efeitos)
@@ -35,7 +41,7 @@
    ============================================================ */
 
 const SaveLib = (() => {
-const SAVE_SCHEMA = 2, SAVE_MAGIC = 'fazenda_las-save', SAVE_APP = '2026.11.17', SAVE_SLOT = 1, SAVE_MAX_COPIES = 3;
+const SAVE_SCHEMA = 2, SAVE_MAGIC = 'fazenda_las-save', SAVE_APP = '2026.11.17', SAVE_SLOT = 1, SAVE_SLOTS = 3, SAVE_MAX_COPIES = 3;
 const SAVE_NS = 'fazenda_las:v2:';
 const SAVE_LEGACY = { main: 'fazenda_leankar_v1', mainOld: 'fazenda_elias_v1', cfg: 'fazenda_leankar_cfg', cfgOld: 'fazenda_elias_cfg', backup: 'fazenda_leankar_v1_backup' };
 const SAVE_LEGACY_MAX_V = 1;                          // o formato "solto" (v1) nunca passou de v:1
@@ -50,6 +56,7 @@ function fnv1a(str) {
 const safeParse = raw => JSON.parse(raw, (k, v) => (k === '__proto__' || k === 'constructor') ? undefined : v);
 const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const normRev = r => Number.isSafeInteger(r) && r >= 0 ? r : 0;
+const validIso = s => typeof s === 'string' && s.length <= 40 && Number.isFinite(Date.parse(s)) ? s : null;      // `savedAt` vem do arquivo: só vale se for uma data de verdade
 /* Deep merge dos DEFAULTS: objetos são mesclados recursivamente (chaves que faltam no save vêm do padrão), arrays e valores simples do save SUBSTITUEM o padrão.
    Não muta nenhum dos dois; ignora `__proto__`/`constructor`. Um valor do save de TIPO errado (ex.: string onde o padrão é objeto) entra como está: o sanitizador do jogo o corrige e conta. */
 function deepMerge(base, src) {
@@ -72,10 +79,14 @@ const SAVE_MIGRATIONS = {
 function createSaveManager(adapter, opts = {}) {
   const now = opts.now || (() => Date.now());
   const iso = opts.iso || (() => new Date().toISOString());
-  const K = {
-    slot: SAVE_NS + 'slot:' + SAVE_SLOT, bak: SAVE_NS + 'slot:' + SAVE_SLOT + ':bak', tmp: SAVE_NS + 'slot:' + SAVE_SLOT + ':tmp',
-    meta: SAVE_NS + 'meta', cfg: SAVE_NS + 'cfg', copy: SAVE_NS + 'copy:',
-  };
+  /* SLOTS (Fase 1c): `cur` é o slot em uso (1–3); `slot`/`bak`/`tmp` de `K` sempre apontam para ele. Todas as funções abaixo (load/save/peek/removeMain/
+     copies.restore/external) trabalham no slot em uso, então o código de uma partida não muda com 1 ou 3 slots. `useSlot(n)` troca; `slots()` lista os três. */
+  let cur = SAVE_SLOT;
+  const K = { slot: '', bak: '', tmp: '', meta: SAVE_NS + 'meta', cfg: SAVE_NS + 'cfg', copy: SAVE_NS + 'copy:' };
+  const pointTo = n => { cur = n; K.slot = SAVE_NS + 'slot:' + n; K.bak = K.slot + ':bak'; K.tmp = K.slot + ':tmp'; };
+  pointTo(SAVE_SLOT);
+  const validSlot = n => Number.isInteger(n) && n >= 1 && n <= SAVE_SLOTS;
+  function withSlot(n, fn) { const prev = cur; pointTo(n); try { return fn(); } finally { pointTo(prev); } }      // síncrono: nada mais roda enquanto as chaves apontam para `n`
   let rules = null;
   function configure(r) { rules = r; }
   const need = () => { if (!rules) throw new Error('SaveManager.configure() não foi chamado'); return rules; };
@@ -121,12 +132,12 @@ function createSaveManager(adapter, opts = {}) {
       if (sc > SAVE_SCHEMA) return { ok: false, reason: 'future' };       // ANTES do crc: um save mais novo pode ter outro cálculo — não é "danificado"
       if (!isObj(o.data) || typeof o.crc !== 'string') return { ok: false, reason: 'json' };
       if (fnv1a(JSON.stringify(o.data)) !== o.crc) return { ok: false, reason: 'crc' };
-      return { ok: true, kind: 'v2', schema: sc, rev: normRev(o.rev), data: o.data };
+      return { ok: true, kind: 'v2', schema: sc, rev: normRev(o.rev), savedAt: validIso(o.savedAt), data: o.data };
     }
     const v = o.v;                                                         // legado v1: o estado "solto"
     if (!Number.isInteger(v) || v < 1) return { ok: false, reason: 'version' };
     if (v > SAVE_LEGACY_MAX_V) return { ok: false, reason: 'future' };
-    return { ok: true, kind: 'v1', schema: v, rev: normRev(o.rev), data: o };
+    return { ok: true, kind: 'v1', schema: v, rev: normRev(o.rev), savedAt: null, data: o };
   }
   function migrateData(ins) {                         // leva os dados até SAVE_SCHEMA; null se faltar migração
     let sc = ins.schema, d = ins.data;
@@ -147,7 +158,7 @@ function createSaveManager(adapter, opts = {}) {
     let r;
     try { r = need().hydrate(data); }                 // as regras do jogo não podem derrubar a leitura: se lançarem, o save é tratado como "dados faltando"
     catch (e) { console.warn('hydrate lançou', e); return { status: 'invalid', reason: 'shape' }; }
-    if (r.status === 'ok') r.rev = ins.rev;
+    if (r.status === 'ok') { r.rev = ins.rev; r.savedAt = ins.savedAt; }
     return r;
   }
 
@@ -198,22 +209,22 @@ function createSaveManager(adapter, opts = {}) {
   function save(S) {
     if (session.stale) return { ok: false, error: namedError('Conflict', 'este jogo foi salvo mais recentemente em outra aba') };
     try {
-      const cur = storedInfo();
-      const gone = cur.raw === null && session.known;                    // N4: outra aba apagou o save — esta aba não o ressuscita
-      if (gone || (cur.raw !== null && cur.rev !== null && cur.rev !== session.rev)) {
-        session.stale = true; console.warn(gone ? 'save recusado: o save foi apagado em outra aba' : 'save recusado: rev gravado', cur.rev, '≠ rev desta aba', session.rev);
+      const curInfo = storedInfo();
+      const gone = curInfo.raw === null && session.known;                    // N4: outra aba apagou o save — esta aba não o ressuscita
+      if (gone || (curInfo.raw !== null && curInfo.rev !== null && curInfo.rev !== session.rev)) {
+        session.stale = true; console.warn(gone ? 'save recusado: o save foi apagado em outra aba' : 'save recusado: rev gravado', curInfo.rev, '≠ rev desta aba', session.rev);
         return { ok: false, error: namedError('Conflict', 'este jogo foi salvo mais recentemente em outra aba') };
       }
-      const ins = cur.raw !== null ? inspect(cur.raw) : null;
+      const ins = curInfo.raw !== null ? inspect(curInfo.raw) : null;
       if (ins && !ins.ok && ins.reason === 'future' && !session.allowFuture) {      // save de versão MAIS NOVA no slot: nunca sobrescrever (só "Novo jogo" explícito)
         return { ok: false, error: namedError('FutureSchema', 'o save é de uma versão mais nova do jogo') };
       }
-      if (ins && !ins.ok) copies.add(cur.raw);                              // vai gravar por cima de algo ilegível (json/crc/…): guarda antes
+      if (ins && !ins.ok) copies.add(curInfo.raw);                              // vai gravar por cima de algo ilegível (json/crc/…): guarda antes
       need().prepare(S);
       const rev = session.rev + 1;
-      safeWrite(JSON.stringify(wrap(need().persist(S), SAVE_SLOT, rev)), ins && ins.ok ? cur.raw : null);
+      safeWrite(JSON.stringify(wrap(need().persist(S), cur, rev)), ins && ins.ok ? curInfo.raw : null);
       session.rev = rev; session.known = true; session.allowFuture = false;        // a permissão de sobrescrever um save futuro é de uma gravação só
-      if (!legacyMainDone) legacyMainDone = readMeta().legacyMain === true || setMeta({ legacyMain: true });      // daqui em diante o legado não é mais consultado
+      if (cur === SAVE_SLOT && !legacyMainDone) legacyMainDone = readMeta().legacyMain === true || setMeta({ legacyMain: true });      // o legado é do slot 1: gravar nele encerra a importação (gravar nos outros não)
     } catch (e) {
       console.warn('falha ao salvar', e);
       return { ok: false, error: e };
@@ -261,7 +272,7 @@ function createSaveManager(adapter, opts = {}) {
     try { importLegacyCopies(); } catch (e) { /* o legado é opcional */ }
     const bakRaw = readSafe(K.bak), tmpRaw = readSafe(K.tmp);
     if (slotRaw === null && bakRaw === null && tmpRaw === null) {
-      if (!readMeta().legacyMain) { const lr = readSafe(SAVE_LEGACY.main) || readSafe(SAVE_LEGACY.mainOld); if (lr !== null) return loadLegacy(lr); }
+      if (cur === SAVE_SLOT && !readMeta().legacyMain) { const lr = readSafe(SAVE_LEGACY.main) || readSafe(SAVE_LEGACY.mainOld); if (lr !== null) return loadLegacy(lr); }
       return { status: 'none' };
     }
     const first = slotRaw !== null ? parse(slotRaw) : null;
@@ -280,12 +291,38 @@ function createSaveManager(adapter, opts = {}) {
     const raw = slotRaw !== null ? slotRaw : (bakRaw !== null ? bakRaw : tmpRaw);
     return Object.assign(first || parse(raw), { raw, backedUp: copies.add(raw) });
   }
-  function removeMain() { for (const k of [K.slot, K.bak, K.tmp]) { try { adapter.remove(k); } catch (e) { /* storage indisponível */ } } }
+  function removeMain() {
+    for (const k of [K.slot, K.bak, K.tmp]) { try { adapter.remove(k); } catch (e) { /* storage indisponível */ } }
+    if (cur === SAVE_SLOT && !legacyMainDone) legacyMainDone = setMeta({ legacyMain: true });      // o jogador apagou o slot 1: o legado não pode ressuscitar nele
+  }
+
+  /* ---------- slots ---------- */
+  const lastSlot = () => { const n = readMeta().lastSlot; return validSlot(n) ? n : null; };
+  const markLast = () => { if (lastSlot() !== cur) setMeta({ lastSlot: cur }); };      // o último slot jogado vira a seleção inicial da tela de título
+  function useSlot(n) {                                 // muda o slot em uso e começa uma sessão limpa nele
+    if (!validSlot(n)) throw new RangeError('slot inválido: ' + n);
+    pointTo(n); sessionApi.reset();
+  }
+  /* Os 3 slots para os cartões da tela de título: { slot, status:'empty'|'ok'|'invalid', summary?, savedAt?, rev?, repaired?, recovered?, reason? }.
+     Usa load() de cada slot, então tem os mesmos efeitos (importa o legado no slot 1, guarda cópia do que estiver ilegível). O resumo vem do ESTADO JÁ
+     SANEADO (não do `summary` do arquivo, que é texto de terceiros). Nunca lança. */
+  function slots() {
+    const out = [];
+    for (let n = 1; n <= SAVE_SLOTS; n++) {
+      out.push(withSlot(n, () => {
+        let r; try { r = load(); } catch (e) { r = { status: 'invalid', reason: 'json' }; }
+        if (r.status === 'ok') return { slot: n, status: 'ok', summary: summarize(r.state), savedAt: r.savedAt || null, rev: r.rev, repaired: r.repaired || 0, recovered: r.recovered || null, imported: !!r.imported };
+        if (r.status === 'invalid') return { slot: n, status: 'invalid', reason: r.reason };
+        return { slot: n, status: 'empty' };
+      }));
+    }
+    return out;
+  }
 
   const sessionApi = {
     reset() { session.rev = 0; session.known = false; session.stale = false; session.active = false; session.allowFuture = false; },       // início de uma partida
-    adopt(loaded) { const ok = !!loaded && loaded.status === 'ok'; session.rev = ok ? loaded.rev : 0; session.known = ok && loaded.persisted !== false; session.active = true; },   // "Continuar" iniciou
-    startNew(prev) { session.rev = prev.rev === null ? 0 : prev.rev; session.active = true; session.allowFuture = true; },           // jogo novo iniciou: continua a contagem do save substituído
+    adopt(loaded) { const ok = !!loaded && loaded.status === 'ok'; session.rev = ok ? loaded.rev : 0; session.known = ok && loaded.persisted !== false; session.active = true; markLast(); },   // "Continuar" iniciou
+    startNew(prev) { session.rev = prev.rev === null ? 0 : prev.rev; session.active = true; session.allowFuture = true; markLast(); },           // jogo novo iniciou: continua a contagem do save substituído
     takeOver() {                                          // "Usar esta aba": guarda o que a outra aba salvou e assume o `rev` dela
       try { const cur = storedInfo(); if (cur.raw !== null) copies.add(cur.raw); session.rev = cur.rev === null ? 0 : cur.rev; } catch (e) { /* storage indisponível: save() avisa */ }
       session.stale = false; session.known = false;       // known=false: se a outra aba APAGOU o save, esta pode recriá-lo (foi escolha do jogador)
@@ -352,11 +389,11 @@ function createSaveManager(adapter, opts = {}) {
     save(obj) { try { adapter.write(K.cfg, JSON.stringify(obj)); } catch (e) { /* ignore */ } },
   };
 
-  return { SCHEMA: SAVE_SCHEMA, configure, kit, deepMerge, load, peek, save, removeMain, copies, session: sessionApi, cfg, external,
+  return { SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, configure, kit, deepMerge, load, peek, save, removeMain, useSlot, slots, lastSlot, slot: () => cur, copies, session: sessionApi, cfg, external,
     format: { MAGIC: SAVE_MAGIC, wrap, inspect, fnv1a, keys: K } };
 }
 
-return { create: createSaveManager, fnv1a, safeParse, deepMerge, SCHEMA: SAVE_SCHEMA, MAGIC: SAVE_MAGIC, LEGACY: SAVE_LEGACY };
+return { create: createSaveManager, fnv1a, safeParse, deepMerge, SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, MAGIC: SAVE_MAGIC, LEGACY: SAVE_LEGACY };
 })();
 
 /* instância do navegador + adaptador: o ÚNICO ponto do projeto que toca `localStorage` */

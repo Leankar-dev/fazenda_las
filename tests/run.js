@@ -1,5 +1,5 @@
 'use strict';
-/* Roda os testes do jogo num Chrome/Edge headless.   uso:  node tests/run.js [cenario ...] [--list] [--chrome=caminho] [--jobs=N]
+/* Roda os testes do jogo num Chrome/Edge headless.   uso:  node tests/run.js [cenario ...] [--list] [--chrome=caminho] [--jobs=N] [--virtual=ms]
    Sem dependências (só Node 18+ e um Chrome/Edge instalado). Código de saída 0 = tudo passou; 1 = algum teste falhou. */
 const fs = require('fs');
 const os = require('os');
@@ -19,6 +19,8 @@ const SCENARIOS = [
   'hostil-estado', 'hostil-estado-v2', 'hostil-estruturas', 'hostil-crops-obs', 'falha-inicio',   // R3: save válido porém hostil (legado e v2)
   'legado-importa', 'legado-elias', 'legado-sem-ressuscitar', 'legado-cfg',            // Fase 1b: legado v1 → v2 (o legado nunca é apagado)
   'recupera-bak', 'recupera-tmp', 'futuro-nao-sobrescrito',                           // Fase 1b: escrita segura, recuperação, schema futuro
+  'slots-cartoes', 'slots-nome-hostil', 'slots-independentes', 'slots-novo-em-outro', 'slots-apagar', 'slots-apagar-sem-espaco', 'legado-vai-para-slot1',   // Fase 1c: 3 slots
+  'continuar-pausado', 'e2e-recarrega',                                             // Fase 1c: começa pausado; novo → jogar → recarregar → continuar idêntico
 ];
 
 function loadFixtures() {
@@ -38,7 +40,7 @@ async function main() {
   const site = lib.buildSite(fs.mkdtempSync(path.join(os.tmpdir(), 'fazenda-site-')), { fixtures: loadFixtures() });
   console.log('Chrome: ' + chrome + '\nCenários: ' + list.length + '\n');
   const t0 = Date.now();
-  const results = await lib.pool(list.map(s => () => lib.runScenario(chrome, site, s)), +opt('jobs') || Math.min(4, os.cpus().length));
+  const results = await lib.pool(list.map(s => () => lib.runScenario(chrome, site, s, { virtualMs: +opt('virtual') || undefined })), +opt('jobs') || Math.min(4, os.cpus().length));
   let pass = 0, fail = 0;
   list.forEach((s, i) => {
     const r = results[i], bad = r.tests.filter(t => !t.ok);

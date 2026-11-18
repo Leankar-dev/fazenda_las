@@ -4,10 +4,10 @@ Testes automáticos de **salvamento e carregamento**, em dois níveis. Sem depen
 
 ```text
 node tests/save.test.js                # 1) unitários do SaveManager, em Node puro (segundos)
-node tests/run.js                      # 2) cenários no navegador headless (3 a 10 min; 4 em paralelo)
+node tests/run.js                      # 2) cenários no navegador headless (3 a 15 min; 4 em paralelo — numa máquina com pouca RAM use --jobs=1)
 node tests/run.js quota-jogo           #    roda só um (ou vários) cenário(s)
 node tests/run.js --list               #    lista os cenários
-node tests/run.js --chrome="C:/caminho/chrome.exe" --jobs=2
+node tests/run.js --chrome="C:/caminho/chrome.exe" --jobs=2 --virtual=60000   # --virtual: orçamento de tempo virtual por cenário (ms)
 node tests/make-fixtures.js            #    (re)gera as fixtures v2 a partir do jogo real
 ```
 
@@ -18,11 +18,11 @@ Código de saída `0` = tudo passou · `1` = algum teste falhou · `2` = erro de
 
 ## O que é testado
 
-### 1) Unitários (`tests/save.test.js`, 42 testes)
+### 1) Unitários (`tests/save.test.js`, 54 testes)
 
-Envelope e `crc` (vetores-padrão do FNV-1a + referência independente), `inspect` (adulterado, truncado, tipos errados, schema futuro, `__proto__`), migração v1 → v2 com fixtures reais, `deepMerge`, escrita segura (rev, `bak`, cota no `tmp`, falha no `bak`/slot, processo que morre entre `tmp` e slot), recuperação (`bak`/`tmp`), save futuro nunca sobrescrito (e permissão de uso único), aba velha (`Conflict`, N2, N4, `external`), cópias (R4/N1, dedupe, mesmo milissegundo, restore), legado (importa sem apagar, não ressuscita, inválido, corrigido, cópias antigas, `elias` × `leankar`, storage cheio), `cfg`, storage bloqueado e o `kit` de sanitização.
+Envelope e `crc` (vetores-padrão do FNV-1a + referência independente), `inspect` (adulterado, truncado, tipos errados, schema futuro, `__proto__`), migração v1 → v2 com fixtures reais, `deepMerge`, escrita segura (rev, `bak`, cota no `tmp`, falha no `bak`/slot, processo que morre entre `tmp` e slot), recuperação (`bak`/`tmp`), save futuro nunca sobrescrito (e permissão de uso único), aba velha (`Conflict`, N2, N4, `external`), cópias (R4/N1, dedupe, mesmo milissegundo, restore), legado (importa sem apagar, não ressuscita, inválido, corrigido, cópias antigas, `elias` × `leankar`, storage cheio), `cfg`, storage bloqueado e o `kit` de sanitização. **Fase 1c:** `useSlot`, `slots()` (resumo do estado saneado, `savedAt` só se for data), legado só no slot 1, apagar o slot 1 não ressuscita o legado, `lastSlot`, `external` só do slot em uso, sessões independentes por slot. Revisão da 1b: `hydrate` que lança, poda que falha, `crc` com `constructor`, slot vazio.
 
-### 2) Cenários de navegador (46)
+### 2) Cenários de navegador (55)
 
 | Grupo | Cenários | O que garante |
 | --- | --- | --- |
@@ -36,6 +36,7 @@ Envelope e `crc` (vetores-padrão do FNV-1a + referência independente), `inspec
 | **R1** — Novo jogo nunca apaga sem cópia | `novo-jogo-copia`, `novo-jogo-falha`, `novo-jogo-pausa`, `novo-jogo-sem-espaco`, `novo-jogo-rev` | Título e pausa guardam cópia **antes** de apagar (slot, `bak` e `tmp` saem juntos); jogo novo que falha ao iniciar não apaga o antigo; sem espaço → baixar e 2º clique; `rev` continua a contagem |
 | **R2** — aba velha | `aba-velha`, `aba-apagada`, `rev-estranho` | `Conflict`, `pagehide` não sobrescreve, aviso (Esc não fecha), "Usar esta aba" guarda cópia; save apagado por outra aba não é recriado (N4); `rev` 5.5 / 1e13 / `"7"` / −3 / `null` não geram conflito falso (N2) |
 | **R3** — save válido porém hostil | `hostil-estado`, `hostil-estado-v2`, `hostil-estruturas`, `hostil-crops-obs`, `falha-inicio` | `tool: 99`, `goal: -1`, `owned: 4000`, `obs: {}`, `crops: null`... são corrigidos (legado **e** envelope v2 válido com dados hostis): o jogo inicia, sem `NaN`, original em cópia, o aviso aparece; se o início falhar → Baixar cópia, sem "recarregue" |
+| **Fase 1c — 3 slots** | `slots-cartoes`, `slots-nome-hostil`, `slots-independentes`, `slots-novo-em-outro`, `slots-apagar`, `slots-apagar-sem-espaco`, `legado-vai-para-slot1`, `continuar-pausado`, `e2e-recarrega` | 3 cartões (ok / ilegível / vazio) e os botões certos para cada um; nome hostil do arquivo não vira HTML; cada slot grava só no seu (`slot=N`, `rev` próprio, `lastSlot`); Novo jogo em slot vazio não toca nos outros nem cria cópia; **Apagar** guarda cópia, confirma e só mexe no slot escolhido (sem espaço → baixar e 2º clique); legado vai para o slot 1; **Continuar abre pausado** (relógio parado até fechar o menu); **E2E com recarga real**: novo jogo no slot 2 → jogar → *Trocar de jogo* → o título abre no slot 2 → Continuar → estado **idêntico campo a campo** |
 | Configuração de áudio | `cfg-audio` | Desligar música/efeitos grava; recarregar mantém; religar grava |
 | Gatilhos e conteúdo | `salva-eventos`, `pt-pk-fora-do-save` | Salva ~0,8 s depois de compra/venda/plantio (rajadas = 1 gravação); `pt`/`pk` não vão para o save |
 
@@ -59,6 +60,7 @@ Os cenários em `tests/browser/scenarios.js` **não sabem** em que chave nem em 
 | Quero… | Use |
 |---|---|
 | limpar tudo | `T.reset()` |
+| os 3 slots (os helpers desta tabela agem no **slot 1**) | `T.slotRaw(n)`, `T.slotState(n)`, `T.slotEnv(n)`, `T.setSlot(n, raw)`, `T.setSlotState(n, st)`, `T.removeSlot(n)`, `T.lastSlot()` |
 | semear / ler o save principal (slot v2) | `T.setMain(raw)`, `T.setMainState(objeto)` → raw, `T.readMain()` (texto), `T.mainState()` (dados + `rev`; `null` se não há) |
 | inspecionar o formato | `T.mainEnv()`, `T.mainSchema()`, `T.mainCrcOk()` |
 | `bak` / `tmp` (escrita segura) | `T.setBak/readBak`, `T.setTmp/readTmp` |

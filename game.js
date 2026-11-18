@@ -675,6 +675,30 @@
     $('btnSpClose').onclick = () => sp.classList.add('hidden');
     sp.classList.remove('hidden');
   }
+  const ago = iso => {      // "há 5 min" / "há 3 h" / "há 2 dias" / a data
+    const ms = Date.now() - Date.parse(iso); if (!Number.isFinite(ms)) return ''; if (ms < 0) return 'agora';
+    const m = Math.floor(ms / 60000); if (m < 1) return 'agora há pouco'; if (m < 60) return 'há ' + m + ' min'; const h = Math.floor(m / 60); if (h < 24) return 'há ' + h + ' h';
+    const d = Math.floor(h / 24); return d < 30 ? 'há ' + d + (d === 1 ? ' dia' : ' dias') : new Date(iso).toLocaleDateString('pt-BR');
+  };
+  // 3 cartões de jogos salvos (tela de título). Tudo entra por textContent: o resumo vem de um arquivo que pode ser de terceiros.
+  function renderSlotCards(cards, sel) {
+    const box = $('slotCards'); box.textContent = '';
+    for (const c of cards) {
+      const b = document.createElement('button'); b.type = 'button'; b.dataset.slot = c.slot; b.setAttribute('aria-pressed', c.slot === sel ? 'true' : 'false');
+      b.className = 'slotCard' + (c.slot === sel ? ' sel' : '') + (c.status === 'invalid' ? ' bad' : '') + (c.status === 'empty' ? ' empty' : '');
+      const add = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; e.textContent = txt; b.appendChild(e); return e; };
+      add('b', '', 'Jogo ' + c.slot);
+      if (c.status === 'ok') {
+        const sm = c.summary, ch = CHARACTERS[sm.char];
+        if (ch) { const im = document.createElement('img'); im.alt = ''; im.src = ch.folder + '/front_walk.png'; b.appendChild(im); }
+        add('span', 'who', cleanName(sm.name, ch ? ch.defName : 'Fazendeiro'));
+        add('small', '', 'Dia ' + sm.day + ' · ' + fmt(sm.gold) + ' ◎');
+        add('small', '', (c.savedAt ? ago(c.savedAt) : 'data desconhecida') + (c.recovered ? ' · recuperado' : c.repaired ? ' · corrigido' : ''));
+      } else if (c.status === 'invalid') { add('span', 'who', '⚠ Save ilegível'); add('small', '', 'Selecione para ver as opções'); }
+      else add('span', 'who', 'Vazio');
+      box.appendChild(b);
+    }
+  }
   const backupLabel = b => { const st = b.info.state, d = b.ts ? new Date(b.ts).toLocaleDateString('pt-BR') : 'data desconhecida'; return 'Dia ' + st.day + ' · ' + fmt(st.gold) + ' ◎ · ' + d; };
 
   /* ---------------- jogador ---------------- */
@@ -1238,7 +1262,7 @@
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
       ④ depois das 18:00, durma na porta do celeiro para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
       Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. As galinhas botam ovos 2× por dia (manhã e meio-dia) e os porcos dão carne 2× por dia. Dias com chuva regam tudo sozinhos!</div>
-      <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb" data-a="close">Continuar</button></div>`);
+      <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="switchslot">Trocar de jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb" data-a="close">Continuar</button></div>`);
   }
 
   function openCharPicker() {
@@ -1290,7 +1314,7 @@
     else if (a === 'rename') openRename();
     else if (a === 'renamesave') {
       S.names = {}; $('modalBox').querySelectorAll('input[data-k]').forEach(i => { S.names[i.dataset.k] = cleanName(i.value, i.dataset.def); });
-      applyNames(S.names); $('nameInfo').textContent = CHAR.name; document.title = 'FAZENDA LAS — ' + CHAR.name;
+      applyNames(S.names); $('nameInfo').textContent = CHAR.name;
       Snd.pop(); toast('Nome salvo: ' + CHAR.name + '!', 'good'); save(); closeModal();
     }
     else if (a === 'char') { const k = b.dataset.k; if (CHARACTERS[k]) { S.char = k; setCharacter(k); buildHotbar(); Snd.pop(); toast('Agora você joga com ' + CHAR.name + '!', 'good'); save(); closeModal(); } }
@@ -1304,6 +1328,10 @@
         setModal(`<h2>Novo jogo</h2><p>Não foi possível guardar uma cópia do jogo atual (sem espaço no navegador). Baixe o save antes ou apague mesmo assim.</p>
           <div class="modalBtns"><button class="mb alt" data-a="resetdl">Baixar cópia (.json)</button><button class="mb red" data-a="resetforce">Apagar mesmo assim</button><button class="mb" data-a="close">Cancelar</button></div>`);
       } else { SaveManager.removeMain(); running = false; location.reload(); }
+    }
+    else if (a === 'switchslot') {       // salva e volta à tela de título (que já abre neste jogo); se o save FALHAR de verdade, fica: sair perderia o progresso
+      const r = save(true);
+      if (r.ok || (r.error && (r.error.name === 'Conflict' || r.error.name === 'FutureSchema'))) { running = false; location.reload(); }
     }
     else if (a === 'resetdl') { if (pendingResetRaw !== null) downloadText(saveFileName(), pendingResetRaw); }
     else if (a === 'stalereload') { running = false; location.reload(); }
@@ -2095,7 +2123,6 @@
     for (const n of SPRITE_LIST) IMGS[n] = CHAR_IMGS[CHAR.id][n];
     makeIcons();
     $('nameInfo').textContent = CHAR.name;
-    document.title = 'FAZENDA LAS — ' + CHAR.name;
     hudCache.bag = undefined; hudCache.slot2 = undefined;
   }
 
@@ -2135,7 +2162,8 @@
       if (prev.raw !== null && !SaveManager.copies.add(prev.raw) && !eraseForced) toast('⚠ Não foi possível guardar cópia do jogo anterior (sem espaço no navegador).', 'bad');
       SaveManager.session.startNew(prev); save();
     }
-    if (/[?&]debug\b/.test(location.search)) window.__game = { S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
+    if (loadIt) openMenu();      // Continuar: o jogo começa PAUSADO (menu aberto): nenhum tempo de jogo se perde e o clique serve de gesto para o áudio
+    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
   }
 
   async function boot() {
@@ -2173,9 +2201,21 @@
       Art.init(); setCharacter('fazendeiro'); makeCloudSprites();
       $('btnMusic').textContent = Snd.musicOn ? '🎵' : '🔕'; $('btnMute').textContent = Snd.muted ? '🔇' : '🔊';
       status.classList.add('hidden');
-      const found = SaveManager.load(), has = found.status === 'ok', bad = found.status === 'invalid';
-      if (has) $('btnContinue').classList.remove('hidden');
-      renderSaveProblem(found, found.status === 'ok' ? null : SaveManager.copies.list().find(b => b.info.status === 'ok'));     // save ilegível, ou ausente com cópia válida
+      // 3 jogos salvos: `sel` é o cartão escolhido; Continuar / Novo jogo / Apagar agem sobre ele (o SaveManager trabalha no slot em uso)
+      let cards = SaveManager.slots(), sel = 1, found = { status: 'none' }, has = false, bad = false, delForced = false;
+      const selectSlot = n => {
+        sel = n; SaveManager.useSlot(n); found = SaveManager.load(); has = found.status === 'ok'; bad = found.status === 'invalid';
+        for (const id of ['confirmNew', 'confirmDel', 'saveProblem']) $(id).classList.add('hidden');
+        eraseForced = false; delForced = false;
+        $('btnContinue').classList.toggle('hidden', !has); $('btnDelete').classList.toggle('hidden', !(has || bad));
+        // sem jogo neste slot: só oferece a cópia de segurança se NENHUM slot tem jogo (senão cada slot vazio mostraria o aviso)
+        const offer = found.status === 'ok' || (found.status === 'none' && cards.some(c => c.status !== 'empty')) ? null : SaveManager.copies.list().find(b => b.info.status === 'ok');
+        renderSaveProblem(found, offer);
+        renderSlotCards(cards, sel);
+      };
+      const last = SaveManager.lastSlot();
+      selectSlot(last && cards[last - 1].status !== 'empty' ? last : (cards.find(c => c.status !== 'empty') || cards[0]).slot);
+      $('slotCards').addEventListener('click', e => { const b = e.target.closest('.slotCard'); if (b && +b.dataset.slot !== sel) selectSlot(+b.dataset.slot); });
       // vitrine do título e tela de seleção
       $('titleImg1').src = CHARACTERS.fazendeiro.folder + '/front_walk.png';
       $('titleImg2').src = CHARACTERS.fazendeira.folder + '/front_walk.png';
@@ -2211,7 +2251,7 @@
       // confirmação na própria tela (confirm() do navegador pode estar bloqueado e deixava o botão "morto")
       $('btnNew').onclick = () => {
         if (!has && !bad) { showSelect(true); return; }
-        eraseForced = false; $('btnYes').textContent = 'Sim, apagar'; $('btnNewDl').classList.add('hidden');
+        eraseForced = false; $('btnYes').textContent = 'Sim, apagar'; $('btnNewDl').classList.add('hidden'); $('confirmDel').classList.add('hidden');
         $('confirmMsg').textContent = has ? 'Isso substituirá o jogo salvo (uma cópia de segurança fica guardada neste navegador). Começar do zero?'
           : 'O save atual não pôde ser lido' + (found.backedUp ? ' (a cópia de segurança fica guardada).' : ' e NÃO há cópia guardada — baixe o arquivo antes!') + ' Começar do zero?';
         $('confirmNew').classList.remove('hidden');
@@ -2227,10 +2267,26 @@
         $('confirmNew').classList.add('hidden'); showSelect(true);
       };
       $('btnNo').onclick = () => { $('confirmNew').classList.add('hidden'); eraseForced = false; };
+      // Apagar o jogo do cartão escolhido: guarda cópia ANTES (R1); se não couber, oferece baixar e só apaga no 2º clique. Nada é apagado em silêncio.
+      $('btnDelete').onclick = () => {
+        delForced = false; $('btnDelYes').textContent = 'Sim, apagar'; $('btnDelDl').classList.add('hidden'); $('confirmNew').classList.add('hidden');
+        $('delMsg').textContent = (has ? 'Apagar o Jogo ' + sel + '? ' : 'O Jogo ' + sel + ' não pôde ser lido. Apagá-lo? ') + 'Uma cópia de segurança fica guardada neste navegador.';
+        $('confirmDel').classList.remove('hidden');
+      };
+      $('btnDelYes').onclick = () => {
+        const raw = SaveManager.peek().raw;
+        if (raw !== null && !delForced && !SaveManager.copies.add(raw)) {
+          delForced = true; $('delMsg').textContent = 'Não foi possível guardar uma cópia do Jogo ' + sel + ' (sem espaço no navegador). Baixe o save antes ou apague mesmo assim.';
+          $('btnDelYes').textContent = 'Apagar mesmo assim'; $('btnDelDl').classList.remove('hidden'); $('btnDelDl').onclick = () => downloadText(saveFileName(), raw);
+          return;
+        }
+        SaveManager.removeMain(); cards = SaveManager.slots(); selectSlot(sel);
+      };
+      $('btnDelNo').onclick = () => { $('confirmDel').classList.add('hidden'); delForced = false; };
       window.addEventListener('beforeunload', () => { if (running) save(); });
       window.addEventListener('pagehide', () => { if (running) save(); });       // iOS/celular: beforeunload não é confiável
       document.addEventListener('visibilitychange', () => { if (document.hidden) { if (running) { save(); if (!modalOpen) openMenu(); } Snd.suspend(); } else Snd.resume(); });
-      $('btnNew').disabled = false; $('btnContinue').disabled = false;
+      $('btnNew').disabled = false; $('btnContinue').disabled = false; $('btnDelete').disabled = false;
     } catch (e) {
       console.error(e); fail('Erro ao carregar o jogo (' + e.message + '). Recarregue a página.');
     }
