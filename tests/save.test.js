@@ -118,8 +118,7 @@ test('todas as fixtures v1 do repositório carregam como o esperado', () => {
     assert.strictEqual(a.read('fazenda_leankar_v1'), FX(fx), fx + ': legado intacto');
   }
 });
-test('migrateData desconhecida: schema sem migração = version', () => {
-  // um envelope schema 1 (magic) passa pela migração 1→2; um schema SEM função de migração não existe hoje — garante que a 1→2 é pura
+test('migração 1→2 de um envelope com magic e schema 1: tira v/rev dos dados, mantém o rev do envelope', () => {
   const M = mgr(mem()), env = M.format.wrap(goodState(), 1, 4); env.schema = 1; env.crc = SaveLib.fnv1a(JSON.stringify(env.data));
   const a = mem(); a.m.set(K(M).slot, JSON.stringify(env)); const r = mgr(a).load(); assert.strictEqual(r.status, 'ok'); assert.strictEqual(r.rev, 4);
 });
@@ -331,9 +330,32 @@ test('kit de sanitização: contagem de correções e ferramentas', () => {
   const K2 = M.kit(); assert.deepStrictEqual(K2.objOf(null, ['x', 'y'], { x: 1, y: 2 }), { x: 1, y: 2 }); assert.deepStrictEqual(K2.pairs([[1, 2], 'z', [3, 4]], 5, e => true), [[1, 2], [3, 4]]); assert.strictEqual(K2.repairs(), 2);
 });
 
+/* ============================ revisão adversarial da 1b ============================ */
+test('hydrate que LANÇA não derruba load(): vira invalid/shape (e o texto vira cópia); copies.list continua inteira', () => {
+  const a = mem(), M = mgr(a); M.session.adopt({ status: 'none' }); M.save(goodState()); const raw = a.read(K(M).slot);
+  const boom = { hydrate() { throw new Error('boom'); }, prepare() {}, persist: S => S }, T = mgr(a, boom);
+  let r; assert.doesNotThrow(() => { r = T.load(); }); assert.strictEqual(r.status, 'invalid'); assert.strictEqual(r.reason, 'shape'); assert.strictEqual(r.raw, raw);
+  a.m.set(K(M).copy + '1', envText(M, goodState(), 1)); a.m.set(K(M).copy + '2', envText(M, goodState(), 2));
+  assert.strictEqual(T.copies.list().length, 3, 'a cópia do slot (do load) + as 2 novas: um hydrate que quebra não esconde nenhuma');
+});
+test('copies.add: se a PODA falha, a cópia já está guardada e devolve true', () => {
+  const a = mem(), M = mgr(a); for (const t of [1, 2, 3]) a.m.set(K(M).copy + t, '{lixo' + t);
+  a.failOn = op => { if (op === 'x') throw new Error('remove bloqueado'); };
+  assert.strictEqual(M.copies.add('{nova'), true); assert.ok(copiesOf(a).some(c => c.raw === '{nova'));
+  a.failOn = () => { throw new Error('tudo bloqueado'); }; assert.strictEqual(M.copies.add('{outra'), false, 'sem conseguir gravar: false');
+});
+test('crc: chave "constructor"/"__proto__" nos dados não faz um save válido virar "crc"; a chave é descartada ao ler', () => {
+  const M = mgr(mem()), st = goodState(); st.names = JSON.parse('{"constructor":"x","a":"K"}');
+  const ins = M.format.inspect(JSON.stringify(M.format.wrap(st, 1, 1))); assert.ok(ins.ok, ins.reason); assert.ok(!Object.prototype.hasOwnProperty.call(ins.data.names, 'constructor')); assert.strictEqual(ins.data.names.a, 'K');
+});
+test('slot com texto vazio = ausente: save não cria cópia vazia, copies.add("") não grava nada', () => {
+  const a = mem(), M = mgr(a); a.m.set(K(M).slot, ''); M.session.adopt({ status: 'none' });
+  assert.ok(M.save(goodState()).ok); assert.strictEqual(copiesOf(a).length, 0); assert.strictEqual(M.copies.add(''), true); assert.strictEqual(copiesOf(a).length, 0);
+});
+
 /* ============================ fixtures v2 (se já geradas) ============================ */
 test('fixtures v2 do repositório: ok carrega sem cópia; crc errado é recusado (e o crc é o FNV-1a de referência)', () => {
-  const okp = path.join(__dirname, 'fixtures', 'save_v2_ok.json'); if (!fs.existsSync(okp)) return;
+  const okp = path.join(__dirname, 'fixtures', 'save_v2_ok.json'); assert.ok(fs.existsSync(okp), 'fixture ausente: rode node tests/make-fixtures.js');
   const env = JSON.parse(fs.readFileSync(okp, 'utf8')); assert.strictEqual(env.crc, fnvRef(JSON.stringify(env.data)), 'crc da fixture bate com a referência independente');
   let a = mem(); a.m.set('fazenda_las:v2:slot:1', fs.readFileSync(okp, 'utf8')); let r = mgr(a).load(); assert.strictEqual(r.status, 'ok'); assert.strictEqual(copiesOf(a).length, 0);
   a = mem(); a.m.set('fazenda_las:v2:slot:1', FX('save_v2_crc_errado')); r = mgr(a).load(); assert.strictEqual(r.status, 'invalid'); assert.strictEqual(r.reason, 'crc');

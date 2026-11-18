@@ -107,7 +107,8 @@ function createSaveManager(adapter, opts = {}) {
   /* `rev` é o número FINAL desta gravação (quem chama soma 1). Tira `v`/`rev` do estado e carimba o `crc`. */
   function wrap(state, slot, rev) {
     const data = Object.assign({}, state); delete data.v; delete data.rev;
-    return { magic: SAVE_MAGIC, schema: SAVE_SCHEMA, app: SAVE_APP, slot: slot || SAVE_SLOT, rev, savedAt: iso(), summary: summarize(data), data, crc: fnv1a(JSON.stringify(data)) };
+    // o crc é calculado sobre o `data` COMO O `inspect` O VÊ (depois do safeParse, que descarta `__proto__`/`constructor`): um save válido nunca vira "crc errado"
+    return { magic: SAVE_MAGIC, schema: SAVE_SCHEMA, app: SAVE_APP, slot: slot || SAVE_SLOT, rev, savedAt: iso(), summary: summarize(data), data, crc: fnv1a(JSON.stringify(safeParse(JSON.stringify(data)))) };
   }
   /* Olha um texto SEM precisar das regras do jogo. { ok:true, kind:'v2'|'v1', schema, rev, data } ou { ok:false, reason } */
   function inspect(raw) {
@@ -143,7 +144,9 @@ function createSaveManager(adapter, opts = {}) {
     if (!ins.ok) return { status: 'invalid', reason: ins.reason };
     const data = migrateData(ins);
     if (!data) return { status: 'invalid', reason: 'version' };
-    const r = need().hydrate(data);
+    let r;
+    try { r = need().hydrate(data); }                 // as regras do jogo não podem derrubar a leitura: se lançarem, o save é tratado como "dados faltando"
+    catch (e) { console.warn('hydrate lançou', e); return { status: 'invalid', reason: 'shape' }; }
     if (r.status === 'ok') r.rev = ins.rev;
     return r;
   }
@@ -165,7 +168,7 @@ function createSaveManager(adapter, opts = {}) {
   }
   function storedInfo() {          // o que está no slot: { raw, rev }; rev === null se o texto não é JSON. Lança se o storage falhar.
     const raw = adapter.read(K.slot);
-    return raw === null ? { raw: null, rev: 0 } : { raw, rev: revOfRaw(raw) };
+    return !raw ? { raw: null, rev: 0 } : { raw, rev: revOfRaw(raw) };      // texto vazio = ausente (igual ao load)
   }
   const peek = () => { try { return storedInfo(); } catch (e) { return { raw: null, rev: 0 }; } };
   const namedError = (name, msg) => { const e = new Error(msg); e.name = name; return e; };
@@ -323,13 +326,15 @@ function createSaveManager(adapter, opts = {}) {
   const copies = {
     list: listCopies,
     add(j) {                                                                    // guarda uma cópia do texto `j`; true se guardou (ou já existia)
+      if (!j) return true;                                                      // nada a guardar
+      let t;
       try {
         if (listCopies().some(b => b.raw === j)) return true;                   // já guardado (o boot e o "Continuar" leem duas vezes)
-        let t = now(); while (adapter.read(copyKey(t)) !== null) t++;           // duas cópias no mesmo milissegundo não se sobrescrevem
+        t = now(); while (adapter.read(copyKey(t)) !== null) t++;               // duas cópias no mesmo milissegundo não se sobrescrevem
         adapter.write(copyKey(t), j);
-        pruneCopies(copyKey(t));
-        return true;
       } catch (e) { return false; }                                             // cota cheia: o texto ainda pode ser baixado da tela inicial
+      try { pruneCopies(copyKey(t)); } catch (e) { /* poda é limpeza: a cópia JÁ está guardada */ }
+      return true;
     },
     addAt(ts, raw) { if (!listCopies().some(b => b.raw === raw)) { let t = ts; while (adapter.read(copyKey(t)) !== null) t++; adapter.write(copyKey(t), raw); } },   // importação do legado (interna)
     restore(b) { try { adapter.write(K.slot, b.raw); return true; } catch (e) { return false; } },     // grava a cópia por cima do principal (texto bruto)
