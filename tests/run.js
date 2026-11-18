@@ -9,13 +9,16 @@ const lib = require('./lib');
 const SCENARIOS = [
   'fixture-pre-carne', 'fixture-atual', 'fixture-minimo', 'fixture-parcial', 'fixture-com-ptpk',          // saves que devem carregar sem NaN
   'fixture-truncado', 'fixture-invalido', 'fixture-futuro', 'fixture-shape', 'fixture-versao',   // saves que devem avisar e ser preservados
+  'fixture-v2-ok', 'fixture-v2-truncado', 'fixture-v2-crc', 'fixture-v2-futuro',                  // formato v2 (envelope com crc)
   'rotacao-copias', 'poda-copias-validas', 'poda-copia-futura', 'poda-copia-versao', 'restaurar', 'restaurar-sem-copia',                                                       // cópias de segurança
   'cfg-audio',                                                                         // configuração de áudio sobrevive ao recarregar
   'quota-jogo', 'quota-boot', 'storage-bloqueado',                                     // falhas de gravação (cota REAL cheia, modo privado)
   'salva-eventos', 'pt-pk-fora-do-save',                                               // gatilhos de save e conteúdo gravado
   'novo-jogo-copia', 'novo-jogo-falha', 'novo-jogo-pausa', 'novo-jogo-sem-espaco', 'novo-jogo-rev',   // R1: Novo jogo nunca apaga sem cópia
   'aba-velha', 'aba-apagada', 'rev-estranho',                                                                         // R2: aba velha não sobrescreve aba nova
-  'hostil-estado', 'hostil-estruturas', 'hostil-crops-obs', 'falha-inicio',            // R3: save válido porém hostil
+  'hostil-estado', 'hostil-estado-v2', 'hostil-estruturas', 'hostil-crops-obs', 'falha-inicio',   // R3: save válido porém hostil (legado e v2)
+  'legado-importa', 'legado-elias', 'legado-sem-ressuscitar', 'legado-cfg',            // Fase 1b: legado v1 → v2 (o legado nunca é apagado)
+  'recupera-bak', 'recupera-tmp', 'futuro-nao-sobrescrito',                           // Fase 1b: escrita segura, recuperação, schema futuro
 ];
 
 function loadFixtures() {

@@ -32,7 +32,11 @@ function buildSite(dest, { files = {}, fixtures = {}, scenarioFile = path.join(_
   let html = fs.readFileSync(path.join(dest, 'index.html'), 'utf8');
   const tag = '<script src="game.js"></script>';
   if (!html.includes(tag)) throw new Error('index.html sem a tag do game.js');
-  html = html.replace(tag, '<script src="tests-fixtures.js"></script><script>window.__errs=[];window.addEventListener("error",function(e){window.__errs.push(e.message)});</script>'
+  // requestAnimationFrame com FALLBACK LENTO: o rAF real continua valendo (com o display funcionando o comportamento é o de sempre), mas se nenhum quadro vier em
+  // 250 ms de tempo virtual um temporizador entrega o callback. SEMPRE com performance.now() (o timestamp do rAF real é de outra base: misturar os dois dava dt NEGATIVO → time regredia → ellipse com raio negativo). O Chrome headless NÃO produz quadros com a tela do Windows bloqueada/apagada (medido: 2 quadros em 3 s);
+  // sem isto os testes ficam presos em "Carregando..." e estouram o tempo. (Um rAF 100 % por temporizador a 16 ms satura a CPU em tempo virtual.)
+  const raf = '<script>(function(){var r=window.requestAnimationFrame.bind(window);window.requestAnimationFrame=function(cb){var d=false,f=function(){if(!d){d=true;cb(performance.now())}};r(f);setTimeout(f,250);return 0}})();</script>';
+  html = html.replace(tag, raf + '<script src="tests-fixtures.js"></script><script>window.__errs=[];window.addEventListener("error",function(e){window.__errs.push(e.message)});</script>'
     + tag + '<script src="tests-scenarios.js"></script>');
   fs.writeFileSync(path.join(dest, 'index.html'), html);
   return dest;

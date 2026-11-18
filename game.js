@@ -134,7 +134,7 @@
 
   function newState() {
     return {
-      v: 1, rev: 0, day: 1, min: DAY_START, gold: 100, earned: 0, energy: 100, water: 15,
+      day: 1, min: DAY_START, gold: 100, earned: 0, energy: 100, water: 15,
       seeds: { cenoura: 8, tomate: 0, milho: 0, abobora: 0, maca: 0, laranja: 0, pessego: 0, limao: 0 },
       harvest: { cenoura: 0, tomate: 0, milho: 0, abobora: 0, maca: 0, laranja: 0, pessego: 0, limao: 0 },
       eggs: 0, stone: 0, wood: 0, milk: 0, truffle: 0, meat: 0, laid: 1,
@@ -538,6 +538,10 @@
       if (manual === true) toast('⚠ Este jogo foi salvo em outra aba — esta aba não salva mais.', 'bad');
       return r;
     }
+    if (r.error && r.error.name === 'FutureSchema') {      // o slot tem um save de versão MAIS NOVA: nunca é sobrescrito
+      if (manual === true || time - lastSaveWarn > 60) { lastSaveWarn = time; toast('⚠ Este jogo está salvo numa versão mais nova — esta aba não vai sobrescrevê-lo. Atualize a página (Ctrl+F5).', 'bad'); Snd.error(); }
+      return r;
+    }
     saveFailing = true;
     if (manual === true || time - lastSaveWarn > 60) { lastSaveWarn = time; toast('⚠ ' + saveErrorText(r.error), 'bad'); Snd.error(); }
     return r;
@@ -566,7 +570,7 @@
     st.up = objOf(st.up, ['basket', 'can', 'boots'], dflt.up);
     Pint(st.up, 'basket', 0, BASKET_CAP.length - 1, 0); Pint(st.up, 'can', 0, CAN_CAP.length - 1, 0); Pint(st.up, 'boots', 0, BOOTS.length - 1, 0);
     Pnum(st, 'water', 0, CAN_CAP[st.up.can], Math.min(dflt.water, CAN_CAP[st.up.can]));
-    Pint(st, 'goal', 0, GOALS.length, 0); Pint(st, 'tool', 0, TOOLS.length - 1, 0); Pint(st, 'dir', 0, 3, 0); Pint(st, 'rev', 0, 1e12, 0);
+    Pint(st, 'goal', 0, GOALS.length, 0); Pint(st, 'tool', 0, TOOLS.length - 1, 0); Pint(st, 'dir', 0, 3, 0);
     if (!PROD_KEYS.includes(st.selSeed)) { bad(); st.selSeed = 'cenoura'; }
     if (typeof st.char !== 'string' || !has(CHARACTERS, st.char)) { bad(); st.char = 'fazendeiro'; }
     if (!Number.isFinite(st.px) || !Number.isFinite(st.py)) { if (st.px !== undefined || st.py !== undefined) bad(); st.px = SPAWN.x; st.py = SPAWN.y; }
@@ -617,9 +621,7 @@
   }
   // Regras do jogo para transformar um save lido (JÁ migrado pelo SaveManager) em estado: defaults, forma mínima e sanitização (R3).
   function hydrateState(s) {
-    const base = newState();
-    const state = Object.assign(base, s, { owned: Object.assign(base.owned, s.owned), seeds: Object.assign(base.seeds, s.seeds), harvest: Object.assign(base.harvest, s.harvest),
-      up: Object.assign(base.up, s.up), stat: Object.assign(base.stat, s.stat), names: Object.assign({}, s.names) });
+    const state = SaveManager.deepMerge(newState(), s);      // defaults por deep merge: um campo novo em newState() (inclusive aninhado) já vale para saves antigos
     if (!Array.isArray(state.soil) || state.soil.length !== MW * MH || ![state.day, state.gold, state.min].every(Number.isFinite)) return { status: 'invalid', reason: 'shape' };
     const repaired = sanitizeState(state);      // (também descarta pt/pk de saves antigos: as plantas são reconstruídas só com t e age)
     if (s.laid === undefined) state.laid = state.min >= Animals.MIDDAY ? 2 : 1;      // save anterior às posturas de meio-dia: não repõe ovos ao carregar
@@ -641,6 +643,7 @@
   }
   const SAVE_PROBLEMS = {
     json: 'O arquivo do save está corrompido e não pôde ser lido.',
+    crc: 'O save está danificado (a verificação de integridade falhou) e não havia uma versão anterior boa.',
     future: 'O save é de uma versão mais nova do jogo. Atualize a página (Ctrl+F5) e tente de novo — ele não foi alterado.',
     version: 'O save é de uma versão do jogo que este código não reconhece.',
     shape: 'O save está incompleto (faltam dados do mapa).',
@@ -2127,7 +2130,7 @@
     running = true; paused = false; modalOpen = false;
     if (!loadIt || S.day === 1) toast('Bem-vindo à fazenda, ' + CHAR.name + '! 🌾', 'good');
     if (S.rain) toast('🌧️ Hoje está chovendo — as plantas já estão regadas.');
-    if (loadIt) { SaveManager.session.adopt(loaded); if (loaded.repaired) toast('⚠ O save tinha dados inválidos que foram corrigidos. Uma cópia do original ficou guardada.', 'bad'); }
+    if (loadIt) { SaveManager.session.adopt(loaded); if (loaded.recovered) toast('⚠ O save principal estava danificado — recuperamos a versão anterior. Uma cópia do danificado ficou guardada.', 'bad'); if (loaded.repaired) toast('⚠ O save tinha dados inválidos que foram corrigidos. Uma cópia do original ficou guardada.', 'bad'); }
     else {      // R1: jogo novo iniciou — agora sim substitui o save anterior, depois de guardar uma cópia dele
       if (prev.raw !== null && !SaveManager.copies.add(prev.raw) && !eraseForced) toast('⚠ Não foi possível guardar cópia do jogo anterior (sem espaço no navegador).', 'bad');
       SaveManager.session.startNew(prev); save();

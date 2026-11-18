@@ -8,43 +8,67 @@
 
   /* =====================================================================================================================================
      T — acesso ao ARMAZENAMENTO, NEUTRO AO FORMATO. Os cenários não sabem em que chave nem em que formato o save mora: tudo passa por T.
-     Quando o formato mudar (Fase 1b: chaves fazenda_las:v2:*, envelope com crc), só ESTE bloco muda — os cenários continuam iguais.
-     Hoje: formato v1 (uma chave + cópias `<chave>_backup_<ts>`). "Estado" = o objeto do jogo (S); "raw" = o texto gravado.
-       T.reset()                  apaga TUDO do storage
-       T.readMain() / T.mainState()   texto gravado / estado (null se não há save ou o texto não é JSON)
-       T.setMain(raw) / T.setMainState(st) → raw   grava o save principal (também serve para simular "outra aba gravou")
-       T.removeMain()             apaga o save principal ("outra aba apagou")
-       T.isMainKey(k)             a chave k é a do save principal? (para contar gravações em Storage.prototype.setItem)
-       T.copies()                 cópias de segurança [{ key, ts, raw, state }], da mais antiga para a mais nova (ts null = chave antiga sem data)
-       T.copyRaw(ts)              texto da cópia com esse ts (null = sem data), ou null
-       T.seedCopy(ts, raw)        cria uma cópia de segurança (ts null = chave antiga sem data)
-       T.fixtureState(nome)       estado (objeto) de uma fixture do tests/fixtures
-       T.readCfg()                configuração de áudio gravada ({music, sfx}) ou null
-       T.validRaw(dia, ouro)      TEXTO de um save mínimo válido (para semear principal ou cópias)
-       T.fireStorage(raw)         dispara o evento "storage" do save principal como se OUTRA aba o tivesse mudado (raw null = apagou)
-       T.fireStorageClear()       idem para "limpar os dados do site" (key null)
+     Hoje (Fase 1b): formato v2 — envelope com crc em `fazenda_las:v2:slot:1` (+ `:bak`, `:tmp`), cópias `fazenda_las:v2:copy:<ts>`, `meta`, `cfg` —
+     e o LEGADO v1 (`fazenda_leankar_*`, `fazenda_elias_*`), que o jogo só LÊ. "Estado" = o objeto do jogo (S); "raw" = o texto gravado.
+       T.reset()                       apaga TUDO do storage
+       — save principal (slot) —
+       T.readMain() / T.mainState()    texto gravado / estado (dados + rev; null se não há save ou o texto não é JSON). O slot pode ter envelope v2 OU texto v1
+       T.mainEnv() / T.mainSchema() / T.mainCrcOk()   o envelope (null se não for v2) · o schema (2; 1 se o slot tem o formato antigo) · o crc confere?
+       T.setMain(raw) / T.setMainState(st) → raw   grava o slot (texto qualquer / envelope v2 válido com o rev de st.rev) — serve p/ simular "outra aba gravou"
+       T.removeMain()                  apaga slot + bak + tmp ("outra aba apagou")
+       T.setBak(raw) / T.readBak() / T.setTmp(raw) / T.readTmp()   versão anterior e escrita em andamento
+       T.isMainKey(k)                  k é a chave do slot? (para contar gravações em Storage.prototype.setItem)
+       — cópias de segurança —
+       T.copies()                      [{ key, ts, raw, state }], da mais antiga para a mais nova (ts 0 = a mais antiga possível)
+       T.copyRaw(ts) / T.seedCopy(ts, raw)   (ts null = 0)
+       — legado (formato v1, só leitura pelo jogo) —
+       T.setLegacy(raw) / T.setLegacyState(obj) → raw / T.readLegacy()   save principal antigo (`fazenda_leankar_v1`)
+       T.setElias(raw) / T.readElias()  save do nome antigo (`fazenda_elias_v1`) · T.setLegacyCopy(ts, raw) / T.readLegacyCopy(ts)  cópias antigas (ts null = sem data)
+       T.setLegacyCfg(obj) / T.readLegacyCfg()   configuração de áudio antiga
+       — resto —
+       T.readCfg()                     configuração de áudio gravada ({music, sfx}) ou null · T.readMeta()  marcadores do legado
+       T.fixtureState(nome)            estado (objeto) de uma fixture do tests/fixtures (v1: o próprio objeto; v2: dados + rev)
+       T.validRaw(dia, ouro) / T.validLegacyRaw(dia, ouro)   TEXTO de um save mínimo válido (v2 / v1)
+       T.fireStorage(raw)              dispara o evento "storage" do slot como se OUTRA aba o tivesse mudado (raw null = apagou) · T.fireStorageClear()  "limpar dados"
      ===================================================================================================================================== */
   const T = (() => {
-    const KEY = 'fazenda_leankar_v1', BK = KEY + '_backup', CFG = 'fazenda_leankar_cfg';
+    const SLOT = 'fazenda_las:v2:slot:1', BAK = SLOT + ':bak', TMP = SLOT + ':tmp', COPY = 'fazenda_las:v2:copy:', META = 'fazenda_las:v2:meta', CFG = 'fazenda_las:v2:cfg';
+    const LEG = 'fazenda_leankar_v1', LEG_BK = LEG + '_backup', LEG_CFG = 'fazenda_leankar_cfg', ELIAS = 'fazenda_elias_v1';
+    const MAGIC = 'fazenda_las-save';
     const parse = raw => { try { return JSON.parse(raw); } catch (e) { return null; } };
-    const copyKey = ts => ts === null ? BK : BK + '_' + ts;
+    const stateOf = raw => { const o = raw === null ? null : parse(raw); if (!o || typeof o !== 'object') return null; return o.magic === MAGIC ? Object.assign({}, o.data, { rev: o.rev }) : o; };
+    const minimal = (day, gold) => ({ day, gold, min: 400, soil: new Array(46 * 34).fill(0), crops: {} });
+    const wrapState = st => {           // savedAt FIXO: o mesmo estado gera sempre o mesmo texto (semeado numa carga, comparado depois de recarregar a página)
+      const d = Object.assign({}, st), rev = d.rev === undefined ? 0 : d.rev; delete d.rev; delete d.v;
+      return JSON.stringify(Object.assign(SaveManager.format.wrap(d, 1, rev), { savedAt: '2026-01-01T00:00:00.000Z' }));
+    };
+    const get = k => localStorage.getItem(k), set = (k, v) => localStorage.setItem(k, v);
     return {
       reset: () => localStorage.clear(),
-      isMainKey: k => k === KEY,
-      readMain: () => localStorage.getItem(KEY),
-      mainState: () => { const r = localStorage.getItem(KEY); return r === null ? null : parse(r); },
-      setMain: raw => localStorage.setItem(KEY, raw),
-      setMainState: st => { const raw = JSON.stringify(st); localStorage.setItem(KEY, raw); return raw; },
-      removeMain: () => localStorage.removeItem(KEY),
-      copies: () => Object.keys(localStorage).filter(k => k === BK || k.startsWith(BK + '_'))
-        .map(k => { const raw = localStorage.getItem(k), ts = k === BK ? null : +k.slice(BK.length + 1); return { key: k, ts, raw, state: parse(raw) }; })
-        .sort((a, b) => (a.ts === null ? -1 : a.ts) - (b.ts === null ? -1 : b.ts)),
-      copyRaw: ts => localStorage.getItem(copyKey(ts)),
-      seedCopy: (ts, raw) => localStorage.setItem(copyKey(ts), raw),
-      fixtureState: nome => parse(F[nome]),
-      readCfg: () => { const r = localStorage.getItem(CFG); return r === null ? null : parse(r); },
-      validRaw: (day, gold) => JSON.stringify({ v: 1, day, gold, min: 400, soil: new Array(46 * 34).fill(0), crops: {} }),
-      fireStorage: raw => window.dispatchEvent(new StorageEvent('storage', { key: KEY, newValue: raw, storageArea: localStorage })),
+      isMainKey: k => k === SLOT,
+      readMain: () => get(SLOT),
+      mainState: () => stateOf(get(SLOT)),
+      mainEnv: () => { const o = parse(get(SLOT)); return o && o.magic === MAGIC ? o : null; },
+      mainSchema: () => { const r = get(SLOT); if (r === null) return null; const o = parse(r); return o && o.magic === MAGIC ? o.schema : (o && o.v) || null; },
+      mainCrcOk: () => { const r = get(SLOT); return r !== null && SaveManager.format.inspect(r).ok; },
+      setMain: raw => set(SLOT, raw),
+      setMainState: st => { const raw = wrapState(st); set(SLOT, raw); return raw; },
+      removeMain: () => { for (const k of [SLOT, BAK, TMP]) localStorage.removeItem(k); },
+      setBak: raw => set(BAK, raw), readBak: () => get(BAK), setTmp: raw => set(TMP, raw), readTmp: () => get(TMP),
+      copies: () => Object.keys(localStorage).filter(k => k.startsWith(COPY))
+        .map(k => { const raw = get(k); return { key: k, ts: +k.slice(COPY.length) || 0, raw, state: stateOf(raw) }; }).sort((a, b) => a.ts - b.ts),
+      copyRaw: ts => get(COPY + (ts === null ? 0 : ts)),
+      seedCopy: (ts, raw) => set(COPY + (ts === null ? 0 : ts), raw),
+      setLegacy: raw => set(LEG, raw), setLegacyState: o => { const raw = JSON.stringify(o); set(LEG, raw); return raw; }, readLegacy: () => get(LEG),
+      setElias: raw => set(ELIAS, raw), readElias: () => get(ELIAS),
+      setLegacyCopy: (ts, raw) => set(ts === null ? LEG_BK : LEG_BK + '_' + ts, raw), readLegacyCopy: ts => get(ts === null ? LEG_BK : LEG_BK + '_' + ts),
+      setLegacyCfg: o => set(LEG_CFG, JSON.stringify(o)), readLegacyCfg: () => { const r = get(LEG_CFG); return r === null ? null : parse(r); },
+      readCfg: () => { const r = get(CFG); return r === null ? null : parse(r); },
+      readMeta: () => { const r = get(META); return r === null ? null : parse(r); },
+      fixtureState: nome => stateOf(F[nome]),
+      validRaw: (day, gold) => wrapState(minimal(day, gold)),
+      validLegacyRaw: (day, gold) => JSON.stringify(Object.assign({ v: 1 }, minimal(day, gold))),
+      fireStorage: raw => window.dispatchEvent(new StorageEvent('storage', { key: SLOT, newValue: raw, storageArea: localStorage })),
       fireStorageClear: () => window.dispatchEvent(new StorageEvent('storage', { key: null, newValue: null, storageArea: localStorage })),
     };
   })();
@@ -86,14 +110,16 @@
   const unfillStorage = () => Object.keys(localStorage).filter(k => k.startsWith('fill_')).forEach(k => localStorage.removeItem(k));
 
   /* ---------- 1) saves que DEVEM carregar (antigos, mínimos, com lixo transitório) ---------- */
-  function loadable(fx, extra) {
+  function loadable(fx, extra, opt = {}) {
     return {
-      seed() { T.reset(); T.setMain(F[fx]); },
+      seed() { T.reset(); if (opt.main) T.setMain(F[fx]); else T.setLegacy(F[fx]); },
       async run() {
-        const raw = F[fx], orig = JSON.parse(raw);
+        const raw = F[fx], orig = opt.main ? T.fixtureState(fx) : JSON.parse(raw);
         await bootReady();
         ok('sem aviso de problema', !vis('saveProblem')); ok('Continuar visível', vis('btnContinue'));
-        ok('save principal intacto após o boot', T.readMain() === raw); ok('nenhuma cópia criada', T.copies().length === 0);
+        if (opt.main) ok('save principal (v2) intacto após o boot', T.readMain() === raw);
+        else { ok('o legado (v1) continua INTACTO após o boot', T.readLegacy() === raw); ok('foi importado para o formato v2 (schema 2, crc confere, slot 1)', T.mainSchema() === 2 && T.mainCrcOk() && T.mainEnv().slot === 1, T.mainSchema()); }
+        ok('nenhuma cópia criada', T.copies().length === 0);
         $('btnContinue').click(); const G = await gameReady(), S = G.S, A = G.Animals;
         ok('sem NaN/Infinity no estado carregado', !hasNaN(S), hasNaN(S));
         ok('campos novos com padrão: meat número, meatDone array, laid 1|2', typeof S.meat === 'number' && Array.isArray(S.meatDone) && (S.laid === 1 || S.laid === 2), [S.meat, S.meatDone, S.laid]);
@@ -105,7 +131,7 @@
         ok('sem NaN depois de passar um dia', !hasNaN(G.S), hasNaN(G.S));
         const r = G.save(); ok('salvar de novo funciona', r.ok);
         const back = T.mainState();
-        ok('regravado: v=1, sem pt/pk, plantas preservadas', back.v === 1 && !/"pt"|"pk"/.test(JSON.stringify(back.crops)) && (!orig.crops || Object.keys(back.crops).length === Object.keys(orig.crops).length));
+        ok('regravado: v2 (schema 2, crc ok), sem pt/pk, plantas preservadas', T.mainSchema() === 2 && T.mainCrcOk() && !/"pt"|"pk"/.test(JSON.stringify(back.crops)) && (!orig.crops || Object.keys(back.crops).length === Object.keys(orig.crops).length));
         if (extra) await extra({ G, S: G.S, orig });
         ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
       },
@@ -113,17 +139,17 @@
   }
 
   /* ---------- 2) saves que NÃO podem carregar: aviso, nada apagado, cópia, confirmação ---------- */
-  function unloadable(fx, expectMsg) {
+  function unloadable(fx, expectMsg, opt = {}) {
     return {
-      seed() { T.reset(); T.setMain(typeof fx === 'string' && F[fx] !== undefined ? F[fx] : fx); },
+      seed() { T.reset(); const raw = typeof fx === 'string' && F[fx] !== undefined ? F[fx] : fx; if (opt.main) T.setMain(raw); else T.setLegacy(raw); },
       async run() {
-        const raw = T.readMain();
+        const read = opt.main ? T.readMain : T.readLegacy, raw = read();
         await bootReady();
         ok('aviso visível', vis('saveProblem')); ok('mensagem cita: ' + expectMsg, $('spMsg').textContent.includes(expectMsg), $('spMsg').textContent);
         ok('avisa que a cópia foi guardada', $('spMsg').textContent.includes('cópia de segurança foi guardada'));
         ok('Baixar visível, Restaurar escondido (não há cópia válida)', vis('btnSpExport') && !vis('btnSpRestore'));
         ok('Continuar escondido', !vis('btnContinue'));
-        ok('save principal NÃO foi alterado', T.readMain() === raw);
+        ok('o save NÃO foi alterado', read() === raw); if (!opt.main) ok('nenhum slot v2 foi criado para um legado inválido', T.readMain() === null);
         ok('exatamente 1 cópia, idêntica ao original', T.copies().length === 1 && T.copies()[0].raw === raw, T.copies().length);
         $('btnSpExport').click(); await wait(100);
         $('btnNew').click(); await wait(100);
@@ -156,6 +182,11 @@
   S_['fixture-futuro'] = unloadable('save_futuro_schema99', 'mais nova');
   S_['fixture-shape'] = unloadable('save_v1_shape', 'incompleto');
   S_['fixture-versao'] = unloadable('save_versao_desconhecida', 'não reconhece');
+  // formato v2 (envelope com crc) no slot
+  S_['fixture-v2-ok'] = loadable('save_v2_ok', async () => { ok('o save v2 carregou sem importar nada do legado', T.readLegacy() === null && T.mainEnv().schema === 2); }, { main: true });
+  S_['fixture-v2-truncado'] = unloadable('save_v2_truncado', 'corrompido', { main: true });
+  S_['fixture-v2-crc'] = unloadable('save_v2_crc_errado', 'danificado', { main: true });
+  S_['fixture-v2-futuro'] = unloadable('save_v2_futuro', 'mais nova', { main: true });
 
   /* sessão com várias cópias: mantém só 3 e oferece restaurar a válida mais recente */
   S_['rotacao-copias'] = {
@@ -282,7 +313,7 @@
       ok('avisa o jogador: "Sem espaço"', toasts().some(t => t.includes('Sem espaço')), JSON.stringify(toasts()));
       G.save(); G.save();
       ok('autosave não repete o aviso em seguida (throttle de 60 s)', toasts().filter(t => t.includes('Sem espaço')).length === 1);
-      ok('o save anterior continua legível (a falha não corrompeu nada)', T.mainState().v === 1);
+      ok('o save anterior continua legível (a falha não corrompeu nada)', T.mainCrcOk());
       clearToasts(); $('btnMenu').click(); await wait(50);
       $('modalBox').querySelector('button[data-a=save]').click(); await wait(50);
       ok('botão Salvar (manual) sempre avisa', toasts().some(t => t.includes('NÃO está sendo salvo')), JSON.stringify(toasts()));
@@ -372,37 +403,37 @@
 
   /* ---------- 6) R1: "Novo jogo" nunca apaga o save sem guardar uma cópia ---------- */
   S_['novo-jogo-copia'] = {
-    seed() { T.reset(); T.setMain(F.save_v1_atual); },
+    seed() { T.reset(); T.setMainState(T.fixtureState('save_v1_atual')); },
     async run() {
       const orig = T.fixtureState('save_v1_atual');
-      await bootReady();
+      await bootReady(); const before = T.readMain();
       $('btnNew').click(); await wait(100);
       ok('pede confirmação e promete a cópia de segurança', vis('confirmNew') && $('confirmMsg').textContent.includes('cópia de segurança'), $('confirmMsg').textContent);
       $('btnYes').click(); await wait(100);
-      ok('a cópia já existe ANTES de escolher o personagem (idêntica ao save)', T.copies().length === 1 && T.copies()[0].raw === F.save_v1_atual, T.copies().length);
-      ok('o save principal continua intacto enquanto escolhe', T.readMain() === F.save_v1_atual && vis('charSelect'));
+      ok('a cópia já existe ANTES de escolher o personagem (idêntica ao save)', T.copies().length === 1 && T.copies()[0].raw === before, T.copies().length);
+      ok('o save principal continua intacto enquanto escolhe', T.readMain() === before && vis('charSelect'));
       document.querySelector('.charCard').click(); await gameReady();
       const main = T.mainState();
       ok('o jogo novo foi gravado (dia 1)', main.day === 1, main.day);
       ok('o contador rev continua a contagem do save anterior (outras abas veem a mudança)', main.rev === (orig.rev || 0) + 1, main.rev);
-      ok('a cópia do jogo anterior continua lá, idêntica', T.copies().length === 1 && T.copies()[0].raw === F.save_v1_atual);
+      ok('a cópia do jogo anterior continua lá, idêntica', T.copies().length === 1 && T.copies()[0].raw === before);
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };
   S_['novo-jogo-falha'] = {       // o jogo novo NÃO consegue iniciar: o save antigo não pode ter sido apagado
-    seed() { T.reset(); T.setMain(F.save_v1_atual); fastRaf(); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
+    seed() { T.reset(); T.setMainState(T.fixtureState('save_v1_atual')); fastRaf(); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
     async run() {
-      await bootReady();
+      await bootReady(); const before = T.readMain();
       $('btnNew').click(); await wait(100); $('btnYes').click(); await wait(100); document.querySelector('.charCard').click();
       await waitStart(() => /falha-simulada/.test($('loadTxt').textContent));
       ok('mostra o erro do jogo novo', /falha-simulada/.test($('loadTxt').textContent), $('loadTxt').textContent);
       ok('o jogo não iniciou', !window.__game);
-      ok('o save antigo NÃO foi apagado', T.readMain() === F.save_v1_atual);
+      ok('o save antigo NÃO foi apagado', T.readMain() === before);
       ok('sem erros JS não tratados', !window.__errs.length, window.__errs.join('|'));
     },
   };
   S_['novo-jogo-pausa'] = {       // "Novo jogo" pelo menu de pausa (recarrega a página: o cenário roda duas vezes)
-    seed() { if (sessionStorage.getItem('ran') === 'novo-jogo-pausa') return; T.reset(); T.setMain(F.save_v1_atual); },
+    seed() { if (sessionStorage.getItem('ran') === 'novo-jogo-pausa') return; T.reset(); T.setMainState(T.fixtureState('save_v1_atual')); },
     async run() {
       const orig = T.fixtureState('save_v1_atual');
       await bootReady();
@@ -413,7 +444,7 @@
         ok('o texto promete a cópia', $('modalBox').textContent.includes('cópia de segurança'));
         $('modalBox').querySelector('button[data-a=reset]').click(); await wait(3000); return;
       }
-      ok('o save principal foi apagado (vai começar do zero)', T.readMain() === null);
+      ok('o save principal foi apagado (vai começar do zero) — slot, bak e tmp', T.readMain() === null && T.readBak() === null && T.readTmp() === null);
       const bk = T.copies().map(c => c.state).filter(Boolean);
       ok('o jogo anterior ficou numa cópia válida (mesmo dia)', bk.length === 1 && bk[0].day === orig.day, JSON.stringify(bk.map(b => b.day)));
       ok('a tela inicial oferece restaurar essa cópia', vis('btnSpRestore') && $('btnSpRestore').textContent.includes('Dia ' + orig.day), $('btnSpRestore').textContent);
@@ -421,14 +452,14 @@
     },
   };
   S_['novo-jogo-sem-espaco'] = {  // a cópia não cabe (cota cheia): avisa, oferece baixar e só apaga se o jogador insistir
-    seed() { T.reset(); T.setMain(F.save_v1_atual); fillStorage(); },
+    seed() { T.reset(); T.setMainState(T.fixtureState('save_v1_atual')); fillStorage(); },
     async run() {
-      await bootReady();
+      await bootReady(); const before = T.readMain();
       ok('save válido carregou (Continuar visível)', vis('btnContinue'));
       $('btnNew').click(); await wait(100); $('btnYes').click(); await wait(100);
       ok('avisa que NÃO coube a cópia', $('confirmMsg').textContent.includes('Não foi possível guardar uma cópia'), $('confirmMsg').textContent);
       ok('botão vira "Apagar mesmo assim" e aparece "Baixar cópia"', $('btnYes').textContent === 'Apagar mesmo assim' && vis('btnNewDl'));
-      ok('não avançou: confirmação ainda aberta, save intacto, nenhuma cópia', vis('confirmNew') && !vis('charSelect') && T.readMain() === F.save_v1_atual && T.copies().length === 0);
+      ok('não avançou: confirmação ainda aberta, save intacto, nenhuma cópia', vis('confirmNew') && !vis('charSelect') && T.readMain() === before && T.copies().length === 0);
       $('btnNewDl').click(); await wait(100);
       $('btnYes').click(); await wait(100);
       ok('só com o 2º clique avança para a escolha do personagem', vis('charSelect'));
@@ -448,7 +479,7 @@
 
   /* ---------- 7) R2: aba velha NÃO sobrescreve aba nova ---------- */
   S_['aba-velha'] = {
-    seed() { T.reset(); T.setMain(F.save_v1_atual); },
+    seed() { T.reset(); T.setMainState(T.fixtureState('save_v1_atual')); },
     async run() {
       await bootReady(); $('btnContinue').click(); const G = await gameReady(), S = G.S;
       const revs = []; let allOk = true;
@@ -457,7 +488,7 @@
       const myDay = S.day;
       // "a outra aba" joga e salva: rev maior, dia 9
       const other = T.mainState(); other.rev += 5; other.day = 9; other.gold = 9999;
-      const otherRaw = JSON.stringify(other); T.setMain(otherRaw);
+      const otherRaw = T.setMainState(other);
       let r = G.save(); ok('save() da aba velha é recusado com erro "Conflict"', r.ok === false && r.error && r.error.name === 'Conflict', r.error && r.error.name);
       window.dispatchEvent(new Event('pagehide')); G.save(true); G.save();
       ok('fechar/esconder a aba velha (pagehide) NÃO sobrescreve: save da outra aba intacto', T.readMain() === otherRaw);
@@ -473,7 +504,7 @@
       ok('avisa que esta aba assumiu', toasts().some(t => t.includes('Esta aba agora salva')), JSON.stringify(toasts()));
       ok('depois disso os saves normais voltam', G.save().ok && T.mainState().rev === other.rev + 2);
       // evento "storage" (outra aba gravou): esta aba vira velha na hora, sem nem tentar gravar
-      const o2 = T.mainState(); o2.rev += 3; const raw2 = JSON.stringify(o2); T.setMain(raw2);
+      const o2 = T.mainState(); o2.rev += 3; const raw2 = T.setMainState(o2);
       T.fireStorage(raw2);
       r = G.save(); ok('evento storage: próximo save recusado e storage intocado', r.ok === false && r.error.name === 'Conflict' && T.readMain() === raw2);
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
@@ -483,7 +514,7 @@
   const staleVisible = () => !$('modal').classList.contains('hidden') && !!$('modalBox').querySelector('button[data-a=staleuse]');      // visível de verdade (closeModal só esconde; o botão antigo continua no DOM)
   /* N4 (2ª revisão adversarial): outra aba APAGOU o save ("Novo jogo" da pausa) — esta aba, que continua aberta, não pode ressuscitá-lo */
   S_['aba-apagada'] = {
-    seed() { T.reset(); T.setMain(F.save_v1_atual); },
+    seed() { T.reset(); T.setMainState(T.fixtureState('save_v1_atual')); },
     async run() {
       await bootReady(); $('btnContinue').click(); const G = await gameReady();
       ok('uso normal: grava', G.save().ok && T.readMain() !== null);
@@ -545,9 +576,11 @@
   };
 
   /* ---------- 8) R3: save "válido" porém hostil é corrigido, não trava o jogo ---------- */
-  function hostile(mutate, check) {
+  let lastHostile = null;
+  function hostile(mutate, check, opt = {}) {
+    lastHostile = [mutate, check];
     return {
-      seed() { T.reset(); const s = T.fixtureState('save_v1_atual'); mutate(s); window.__hostileRaw = JSON.stringify(s); T.setMain(window.__hostileRaw); },
+      seed() { T.reset(); const s = T.fixtureState('save_v1_atual'); mutate(s); window.__hostileRaw = opt.v2 ? T.setMainState(s) : T.setLegacyState(s); },      // v1: o save de quem já joga (importado) · v2: envelope VÁLIDO com dados hostis
       async run() {
         const raw = window.__hostileRaw;
         await bootReady();
@@ -573,10 +606,11 @@
     ok('selSeed e char válidos', S.selSeed === 'cenoura' && S.char === 'fazendeiro', S.selSeed + '/' + S.char);
     ok('energia e água numéricas e dentro da faixa', S.energy === 100 && Number.isFinite(S.water) && S.water >= 0 && S.water <= 50, S.energy + '/' + S.water);
     ok('relógio dentro do dia (06:00..24:00)', S.min >= 360 && S.min <= 1440, S.min);
-    ok('posição finita, dir 0..3, laid 1|2, rev inteiro', Number.isFinite(G.P.x) && Number.isFinite(G.P.y) && S.dir >= 0 && S.dir <= 3 && (S.laid === 1 || S.laid === 2) && Number.isInteger(S.rev), [G.P.x, S.dir, S.laid, S.rev]);
+    ok('posição finita, dir 0..3, laid 1|2 (o rev agora vive no envelope, não no estado)', Number.isFinite(G.P.x) && Number.isFinite(G.P.y) && S.dir >= 0 && S.dir <= 3 && (S.laid === 1 || S.laid === 2) && !('rev' in S), [G.P.x, S.dir, S.laid]);
     ok('owned limitado ao máximo da loja (4/4/2) — nada de 8.000 animais', S.owned.vaca === 4 && S.owned.porco === 4 && S.owned.cavalo === 2 && G.Animals.list.length <= 11, JSON.stringify(S.owned) + ' animais=' + G.Animals.list.length);
     ok('sementes/melhoria/estatística negativas ou enormes viram valores válidos', S.seeds.cenoura === 0 && S.up.basket === 2 && S.stat.till === 0);
   });
+  S_['hostil-estado-v2'] = hostile(...lastHostile, { v2: true });
   S_['hostil-estruturas'] = hostile(s => {
     s.obs = {}; s.obsInit = true; s.felled = {}; s.eggList = 'x'; s.digs = [[1, 2], ['a', 1], [999, 999], null]; s.truffleList = 5; s.soil[3] = 7; s.soil[4] = 'x'; s.milked = {}; s.meatDone = 'abc';
     s.crops = { '6,8': { t: 'milho', age: 2, pt: 1, pk: 'x' }, '7,8': { t: 'zzz', age: 1 }, 'a,b': { t: 'milho', age: 1 }, '9,9': { t: 'milho', age: 'x' }, '999,999': { t: 'milho', age: 1 }, '10,9': null };
@@ -598,18 +632,123 @@
     ok('pedra: variação 7 vira 0..1 e hp negativo vira o padrão', rk && rk[3] >= 0 && rk[3] <= 1 && rk[4] === 3, JSON.stringify(rk));
   });
   S_['falha-inicio'] = {      // o save passa na leitura mas o jogo não consegue iniciá-lo: cópia + baixar, sem "recarregue"
-    seed() { T.reset(); T.setMain(F.save_v1_atual); fastRaf(); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
+    seed() { T.reset(); T.setMainState(T.fixtureState('save_v1_atual')); fastRaf(); Animals.spawn = () => { throw new Error('falha-simulada'); }; },
     async run() {
-      await bootReady(); $('btnContinue').click();
+      await bootReady(); const before = T.readMain(); $('btnContinue').click();
       await waitStart(() => vis('saveProblem'));
       ok('aparece a caixa "Problema com o jogo salvo"', vis('saveProblem'));
       ok('explica que o save foi lido mas não iniciou, com o detalhe do erro', $('spMsg').textContent.includes('não conseguiu iniciá-lo') && $('spMsg').textContent.includes('falha-simulada'), $('spMsg').textContent);
       ok('NÃO manda "recarregar a página" (não resolveria)', !/Recarregue/.test($('spMsg').textContent + $('loadTxt').textContent), $('loadTxt').textContent);
       ok('oferece Baixar cópia', vis('btnSpExport'));
-      ok('guardou uma cópia idêntica ao save', T.copies().length === 1 && T.copies()[0].raw === F.save_v1_atual);
-      ok('o save original NÃO foi alterado', T.readMain() === F.save_v1_atual);
+      ok('guardou uma cópia idêntica ao save', T.copies().length === 1 && T.copies()[0].raw === before);
+      ok('o save original NÃO foi alterado', T.readMain() === before);
       $('btnSpExport').click(); await wait(100);
       ok('sem erros JS não tratados', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  /* ---------- 9) Fase 1b: legado v1 → v2, recuperação (bak/tmp) e save de versão futura ---------- */
+  S_['legado-importa'] = {      // o legado v1 é IMPORTADO para o slot v2 sem ser tocado; as cópias antigas viram cópias v2 com o mesmo ts
+    seed() { T.reset(); T.setLegacyCopy(1500, T.validLegacyRaw(2, 22)); T.setLegacyCopy(null, '{velha'); T.setLegacyState(T.fixtureState('save_v1_atual')); },
+    async run() {
+      const legacyRaw = T.readLegacy(), orig = T.fixtureState('save_v1_atual');
+      await bootReady();
+      ok('aparece "Continuar" e nenhum aviso de problema', vis('btnContinue') && !vis('saveProblem'));
+      ok('o legado continua INTACTO', T.readLegacy() === legacyRaw);
+      const env = T.mainEnv();
+      ok('slot v2 criado: schema 2, crc ok, dados do legado, sem v/rev dentro de data', env && env.schema === 2 && T.mainCrcOk() && env.data.day === orig.day && !('v' in env.data) && !('rev' in env.data), JSON.stringify(env && env.summary));
+      ok('cópias antigas (…_backup_<ts> e a sem data) viraram cópias v2 com o mesmo ts', T.copyRaw(1500) === T.validLegacyRaw(2, 22) && T.copyRaw(null) === '{velha', JSON.stringify(T.copies().map(c => c.ts)));
+      ok('as chaves antigas dessas cópias continuam lá', T.readLegacyCopy(1500) !== null && T.readLegacyCopy(null) === '{velha');
+      ok('marcadores gravados (legacyMain e legacyCopies)', (T.readMeta() || {}).legacyMain === true && (T.readMeta() || {}).legacyCopies === true, JSON.stringify(T.readMeta()));
+      $('btnContinue').click(); const G = await gameReady();
+      ok('jogando o save importado: dia do legado', G.S.day === orig.day, G.S.day);
+      ok('regravar gera v2 válido, o legado segue intacto e nenhuma cópia extra', G.save().ok && T.mainCrcOk() && T.readLegacy() === legacyRaw && T.copies().length === 2, T.copies().length);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['legado-elias'] = {        // N3: as DUAS chaves antigas existem: usa a nova, guarda a "elias" como cópia e não apaga nenhuma
+    seed() { T.reset(); T.setLegacy(T.validLegacyRaw(2, 22)); T.setElias(T.validLegacyRaw(11, 1111)); },
+    async run() {
+      await bootReady();
+      ok('carrega a chave nova (dia 2)', vis('btnContinue') && T.mainState() && T.mainState().day === 2, T.mainState() && T.mainState().day);
+      ok('a chave "elias" NÃO foi apagada', T.readElias() === T.validLegacyRaw(11, 1111));
+      ok('...e virou uma cópia de segurança (dia 11)', T.copies().some(c => c.raw === T.validLegacyRaw(11, 1111)), T.copies().length);
+      ok('a chave "leankar" também continua', T.readLegacy() === T.validLegacyRaw(2, 22));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['legado-sem-ressuscitar'] = {      // depois de importado, "Novo jogo" (pausa) apaga o slot e o save ANTIGO não volta. Recarrega a página: roda duas vezes
+    seed() { if (sessionStorage.getItem('ran') === 'legado-sem-ressuscitar') return; T.reset(); T.setLegacyState(T.fixtureState('save_v1_atual')); },
+    async run() {
+      await bootReady();
+      if (sessionStorage.getItem('ran') !== 'legado-sem-ressuscitar') {
+        sessionStorage.setItem('ran', 'legado-sem-ressuscitar'); sessionStorage.setItem('legacy', T.readLegacy());
+        $('btnContinue').click(); await gameReady(); $('btnMenu').click(); await wait(50);
+        $('modalBox').querySelector('button[data-a=resetask]').click(); await wait(50);
+        $('modalBox').querySelector('button[data-a=reset]').click(); await wait(3000); return;
+      }
+      ok('o save principal foi apagado (slot, bak e tmp)', T.readMain() === null && T.readBak() === null && T.readTmp() === null);
+      ok('o legado antigo NÃO ressuscitou: título sem "Continuar"', !vis('btnContinue'));
+      ok('a tela inicial só oferece restaurar a cópia do jogo apagado', vis('saveProblem') && $('spMsg').textContent.includes('Não há jogo salvo') && vis('btnSpRestore') && T.copies().length === 1, $('spMsg').textContent);
+      ok('o legado continua guardado, intacto', T.readLegacy() === sessionStorage.getItem('legacy'));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['legado-cfg'] = {          // a configuração de áudio antiga é COPIADA para a v2 (sem apagar a antiga). O Snd lê ao carregar a página: roda duas vezes
+    seed() { if (sessionStorage.getItem('ran') === 'legado-cfg') return; T.reset(); T.setLegacyCfg({ music: false, sfx: false }); },
+    async run() {
+      await bootReady();
+      if (sessionStorage.getItem('ran') !== 'legado-cfg') { sessionStorage.setItem('ran', 'legado-cfg'); location.reload(); await wait(5000); return; }
+      ok('depois de recarregar: música e efeitos DESLIGADOS (veio da configuração antiga)', $('btnMusic').textContent === '🔕' && $('btnMute').textContent === '🔇', $('btnMusic').textContent + $('btnMute').textContent);
+      const c = T.readCfg(); ok('a configuração v2 foi gravada com os mesmos valores', c && c.music === false && c.sfx === false, JSON.stringify(c));
+      const l = T.readLegacyCfg(); ok('a configuração antiga continua intacta', l && l.music === false && l.sfx === false, JSON.stringify(l));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['recupera-bak'] = {        // slot DANIFICADO (crc errado) + versão anterior boa no bak: recupera, avisa, guarda o danificado e continua a contar o rev
+    seed() {
+      T.reset(); const st = T.fixtureState('save_v1_atual');
+      st.rev = 4; st.gold = 1111; T.setBak(T.setMainState(st));
+      st.rev = 5; st.gold = 2222; const env = JSON.parse(T.setMainState(st)); env.crc = '00000000'; window.__damaged = JSON.stringify(env); T.setMain(window.__damaged); window.__bak = T.readBak();
+    },
+    async run() {
+      await bootReady();
+      ok('há "Continuar" e nenhuma caixa de problema (foi recuperado)', vis('btnContinue') && !vis('saveProblem'));
+      ok('o danificado foi guardado numa cópia e o slot ainda não foi alterado', T.copies().some(c => c.raw === window.__damaged) && T.readMain() === window.__damaged, T.copies().length);
+      $('btnContinue').click(); const G = await gameReady();
+      ok('carregou a versão anterior (ouro 1111) e avisou que recuperou', G.S.gold === 1111 && toasts().some(t => t.includes('recuperamos')), G.S.gold + ' ' + JSON.stringify(toasts()));
+      const r = G.save(); steps(G, 5);
+      ok('o 1º save depois da recuperação funciona (sem falso "outra aba") e o slot volta a ser v2 válido', r.ok && T.mainCrcOk() && !staleVisible(), JSON.stringify(r.ok));
+      ok('o rev continua depois do do slot danificado (5 → 6)', T.mainEnv().rev === 6, T.mainEnv() && T.mainEnv().rev);
+      ok('o bak bom NÃO foi trocado pelo lixo', T.readBak() === window.__bak);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['recupera-tmp'] = {        // slot e bak ausentes, tmp válido (escrita interrompida): recupera, e o 1º save grava o slot sem falso conflito
+    seed() { T.reset(); T.setTmp(T.validRaw(9, 999)); },
+    async run() {
+      await bootReady();
+      ok('há "Continuar" e nenhuma caixa de problema', vis('btnContinue') && !vis('saveProblem'));
+      $('btnContinue').click(); const G = await gameReady();
+      ok('carregou o save do tmp (dia 9) e avisou que recuperou', G.S.day === 9 && toasts().some(t => t.includes('recuperamos')), G.S.day);
+      const r = G.save(); steps(G, 5);
+      ok('o 1º save grava o slot v2 (sem falso "outra aba apagou") com o dia 9', r.ok && T.mainCrcOk() && T.mainEnv().data.day === 9 && !staleVisible(), JSON.stringify(r.ok));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['futuro-nao-sobrescrito'] = {      // um save de versão MAIS NOVA no slot nunca é sobrescrito pelo jogo em andamento (nem em pagehide)
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(); ok('save normal funciona', G.save().ok);
+      const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: T.mainEnv().rev, data: { novo: 1 }, crc: 'x' });
+      T.setMain(fut);                      // MESMO rev: só a trava de versão futura pode impedir a gravação
+      clearToasts(); const r = G.save(true);
+      ok('save() recusado com FutureSchema', r.ok === false && r.error && r.error.name === 'FutureSchema', r.error && r.error.name);
+      ok('o save futuro continua exatamente como estava', T.readMain() === fut);
+      ok('avisa o jogador (versão mais nova, atualizar a página)', toasts().some(t => t.includes('versão mais nova')), JSON.stringify(toasts()));
+      window.dispatchEvent(new Event('pagehide')); G.save();
+      ok('pagehide e autosave também não o sobrescrevem', T.readMain() === fut);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };
 
@@ -631,7 +770,7 @@
       if (modern) { S.meat = 2; S.meatDone = [1, 2, 0]; }
       steps(G, 20); G.P.x = 9 * 64; G.P.y = 7 * 64;
       const r = G.save(); ok('gravou', r === undefined || r.ok === true);       // o save() antigo não devolvia nada
-      data = { raw: T.readMain() };
+      data = { raw: T.readMain() || T.readLegacy() };
     },
   };
 
