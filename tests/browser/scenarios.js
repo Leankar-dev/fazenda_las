@@ -822,7 +822,7 @@
     seed() {
       T.reset(); window.__xss = undefined;
       T.setSlotState(1, Object.assign(T.fixtureState('save_v1_atual'), { char: 'fazendeiro', names: { fazendeiro: '<img src=x onerror="window.__xss=1">Zé', fazendeira: 'Ana' } }));
-      const raw = T.slotRaw(1), env = JSON.parse(raw); env.summary = { name: '<img src=x onerror="window.__xss=2">', day: '<b>9</b>', gold: '<i>1</i>' }; T.setSlot(1, JSON.stringify(env));
+      const raw = T.slotRaw(1), env = JSON.parse(raw); env.summary = { name: '<img src=x onerror="window.__xss=2">', day: 777, gold: 888777 }; T.setSlot(1, JSON.stringify(env));
     },
     async run() {
       await bootReady(); await wait(300);
@@ -831,7 +831,7 @@
       ok('nenhum <b>/<i> do arquivo virou elemento', !card(1).querySelector('i') && card(1).querySelectorAll('b').length === 1, card(1).innerHTML);
       ok('o script do nome NÃO rodou', window.__xss === undefined, window.__xss);
       ok('o texto do cartão não tem "<"', !cardText(1).includes('<'), cardText(1));
-      ok('o resumo adulterado do arquivo foi ignorado (dia vem do estado)', !cardText(1).includes('9') || cardText(1).includes('Dia ' + T.slotState(1).day), cardText(1));
+      ok('o resumo adulterado do arquivo foi ignorado: o cartão mostra o dia/ouro do ESTADO', !cardText(1).includes('777') && cardText(1).includes('Dia ' + T.slotState(1).day + ' ·'), cardText(1));
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };
@@ -960,6 +960,59 @@
       ok('fase 2: o rev do slot só sobe (≥ 2)', rev >= 2, rev);
       ok('fase 2: o slot 1 nunca foi criado', T.slotRaw(1) === null);
       sessionStorage.removeItem('e2e_before'); sessionStorage.removeItem('e2e_tests');
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  /* ---------- revisão da 1c ---------- */
+  const recoverable = () => {          // slot 1 DANIFICADO (crc errado) + versão anterior boa no bak ("recuperado"): guarda o texto do bak em window.__bak
+    T.reset(); const st = T.fixtureState('save_v1_atual');
+    st.rev = 4; st.gold = 1111; T.setBak(T.setMainState(st));
+    st.rev = 5; st.gold = 2222; const env = JSON.parse(T.setMainState(st)); env.crc = '00000000'; T.setMain(JSON.stringify(env)); window.__bak = T.readBak();
+  };
+  S_['slots-apagar-recuperado'] = {          // Apagar um jogo "recuperado": a cópia guardada é a LEGÍVEL (o bak), não o texto danificado — e a confirmação não mente
+    seed: recoverable,
+    async run() {
+      await bootReady();
+      ok('o cartão 1 está como recuperado, com Continuar e Apagar', cardText(1).includes('recuperado') && vis('btnContinue') && vis('btnDelete'), cardText(1));
+      $('btnDelete').click(); await wait(50); $('btnDelYes').click(); await wait(150);
+      ok('slot 1 apagado (slot, bak e tmp)', T.slotRaw(1) === null && T.readBak() === null && T.readTmp() === null);
+      ok('ficou uma cópia idêntica ao jogo LEGÍVEL (o bak)', T.copies().some(c => c.raw === window.__bak && c.state && c.state.gold === 1111), T.copies().length);
+      ok('cartão 1 agora é "Vazio"', cardText(1).includes('Vazio'));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['novo-jogo-recuperado'] = {          // Novo jogo por cima de um jogo "recuperado": o jogo legível (bak) vira cópia antes de ser substituído
+    seed: recoverable,
+    async run() {
+      await bootReady(); $('btnNew').click(); await wait(100); ok('pede confirmação', vis('confirmNew'));
+      $('btnYes').click(); await wait(100); document.querySelectorAll('.charCard')[0].click(); const G = await gameReady();
+      ok('jogo novo iniciou (dia 1)', G.S.day === 1, G.S.day);
+      ok('o jogo legível (bak, ouro 1111) está numa cópia', T.copies().some(c => c.raw === window.__bak), T.copies().length);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['slots-trocar-futuro'] = {          // "Trocar de jogo" com o slot num save de versão mais nova: NÃO recarrega em silêncio; oferece baixar / sair mesmo assim
+    seed() { T.reset(); },
+    async run() {
+      window.__alive = true; await bootReady(); const G = await startNew(); ok('save normal funciona', G.save().ok);
+      const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: T.mainEnv().rev, data: { novo: 1 }, crc: 'x' }); T.setMain(fut);
+      G.openMenu(); $('modalBox').querySelector('[data-a=switchslot]').click(); await wait(300);
+      ok('a página NÃO recarregou e o jogo continua', window.__alive === true && !!window.__game);
+      ok('mostra a escolha: Baixar cópia, Sair mesmo assim, Cancelar', vis('modal') && !!$('modalBox').querySelector('[data-a=leavedl]') && !!$('modalBox').querySelector('[data-a=leaveforce]') && $('modalBox').textContent.includes('versão mais nova'), $('modalBox').textContent.slice(0, 60));
+      ok('o save futuro continua intacto', T.readMain() === fut);
+      $('modalBox').querySelector('[data-a=close]').click(); await wait(100);
+      ok('Cancelar fecha a escolha e o jogo segue', !vis('modal') && window.__alive === true);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['slots-trocar-conflito'] = {          // "Trocar de jogo" numa aba velha: mostra o aviso de outra aba (Recarregar / Usar esta aba) em vez de descartar o progresso
+    seed() { T.reset(); },
+    async run() {
+      window.__alive = true; await bootReady(); const G = await startNew(); ok('save normal funciona', G.save().ok);
+      T.setMainState(Object.assign(T.fixtureState('save_v1_atual'), { rev: 50 }));          // "outra aba" salvou depois
+      G.openMenu(); $('modalBox').querySelector('[data-a=switchslot]').click(); await wait(300);
+      ok('a página NÃO recarregou e o aviso de outra aba está visível', window.__alive === true && staleVisible());
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };

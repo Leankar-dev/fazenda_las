@@ -21,6 +21,7 @@ const SCENARIOS = [
   'recupera-bak', 'recupera-tmp', 'futuro-nao-sobrescrito',                           // Fase 1b: escrita segura, recuperação, schema futuro
   'slots-cartoes', 'slots-nome-hostil', 'slots-independentes', 'slots-novo-em-outro', 'slots-apagar', 'slots-apagar-sem-espaco', 'legado-vai-para-slot1',   // Fase 1c: 3 slots
   'continuar-pausado', 'e2e-recarrega',                                             // Fase 1c: começa pausado; novo → jogar → recarregar → continuar idêntico
+  'slots-apagar-recuperado', 'novo-jogo-recuperado', 'slots-trocar-futuro', 'slots-trocar-conflito',     // revisão da 1c: apagar/novo sobre jogo recuperado; Trocar de jogo sem perder progresso
 ];
 
 function loadFixtures() {

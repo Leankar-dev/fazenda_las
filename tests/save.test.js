@@ -417,6 +417,39 @@ test('useSlot começa sessão limpa: aba velha de um slot não contamina o outro
   M.copies.add('{x'); M.useSlot(1); assert.strictEqual(M.copies.list().length, 1, 'as cópias não são por slot');
 });
 
+/* ---- revisão da 1c: Apagar / Novo jogo copiam o texto que o load() usaria (peekBest), não só o do slot ---- */
+test('peekBest: slot legível → o slot; slot danificado + bak bom → o bak; só bak/tmp → eles; futuro → o slot; nada → null; nunca lança', () => {
+  const a = mem(), M = mgr(a); M.session.adopt({ status: 'none' }); M.save(goodState(5, 500)); M.save(goodState(6, 600));
+  const slot = a.read(slotKey(1)), bak = a.read(slotKey(1) + ':bak');
+  assert.strictEqual(M.peekBest().raw, slot, 'slot legível'); assert.strictEqual(JSON.parse(M.peekBest().raw).data.day, 6);
+  a.m.set(slotKey(1), '{"magic":"fazenda_las-save","schema":2,"data":{x:');
+  assert.strictEqual(M.peekBest().raw, bak, 'slot danificado: o jogo legível é o bak'); assert.strictEqual(JSON.parse(M.peekBest().raw).data.day, 5);
+  a.m.delete(slotKey(1)); assert.strictEqual(M.peekBest().raw, bak, 'sem slot: o bak');
+  a.m.delete(slotKey(1) + ':bak'); a.m.set(slotKey(1) + ':tmp', slot); assert.strictEqual(M.peekBest().raw, slot, 'só o tmp');
+  a.m.delete(slotKey(1) + ':tmp'); assert.deepStrictEqual(M.peekBest(), { raw: null, rev: 0 });
+  const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: 2, data: { n: 1 }, crc: 'x' }); a.m.set(slotKey(1), fut); a.m.set(slotKey(1) + ':bak', bak);
+  assert.strictEqual(M.peekBest().raw, fut, 'save futuro nunca é "recuperado" pelo bak (igual ao load)');
+  a.m.set(slotKey(1), '{lixo'); a.m.delete(slotKey(1) + ':bak'); assert.strictEqual(M.peekBest().raw, '{lixo', 'tudo ilegível: o que existir');
+  const b = mem(), B = mgr(b); b.read = () => { throw new Error('bloqueado'); }; assert.deepStrictEqual(B.peekBest(), { raw: null, rev: 0 });
+});
+test('Apagar um jogo "recuperado" (slot danificado + bak bom, ou só bak) deixa uma cópia LEGÍVEL antes de removeMain', () => {
+  for (const mode of ['danificado', 'ausente']) {
+    const a = mem(), M = mgr(a); M.session.adopt({ status: 'none' }); M.save(goodState(5, 500)); M.save(goodState(6, 600));
+    const bak = a.read(slotKey(1) + ':bak');
+    if (mode === 'danificado') a.m.set(slotKey(1), '{"magic":"fazenda_las-save","schema":2,"data":{x:'); else a.m.delete(slotKey(1));
+    const M2 = mgr(a); assert.strictEqual(M2.slots()[0].recovered, 'bak', mode);
+    assert.ok(M2.copies.add(M2.peekBest().raw), mode); M2.removeMain();                    // o que o botão Apagar faz
+    assert.strictEqual(a.read(slotKey(1)), null); assert.strictEqual(a.read(slotKey(1) + ':bak'), null);
+    assert.ok(M2.copies.list().some(c => c.raw === bak && c.info.status === 'ok'), mode + ': o jogo legível (dia 5) ficou numa cópia');
+  }
+});
+test('exportText: texto do save que seria gravado (slot em uso, rev+1), sem gravar nada', () => {
+  const a = mem(), M = mgr(a); M.useSlot(2); M.session.adopt({ status: 'none' }); M.save(goodState(2, 22));
+  const before = a.read(slotKey(2)), txt = M.exportText(goodState(2, 99)), env = JSON.parse(txt);
+  assert.strictEqual(env.slot, 2); assert.strictEqual(env.rev, 2); assert.strictEqual(env.data.gold, 99); assert.ok(M.format.inspect(txt).ok);
+  assert.strictEqual(a.read(slotKey(2)), before, 'não grava');
+});
+
 /* ============================ fixtures v2 (se já geradas) ============================ */
 test('fixtures v2 do repositório: ok carrega sem cópia; crc errado é recusado (e o crc é o FNV-1a de referência)', () => {
   const okp = path.join(__dirname, 'fixtures', 'save_v2_ok.json'); assert.ok(fs.existsSync(okp), 'fixture ausente: rode node tests/make-fixtures.js');

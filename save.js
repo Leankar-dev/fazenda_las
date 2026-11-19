@@ -31,6 +31,8 @@
                          mesmos efeitos do load(): importa o legado no slot 1, guarda cópia do que estiver ilegível). `summary` vem do estado SANEADO.
      lastSlot()        o último slot jogado (gravado ao iniciar uma partida) ou null
      peek()            → { raw, rev } do que está gravado no slot (nunca lança)
+     peekBest()        → { raw, rev } do texto que load() usaria (slot → bak → tmp): é ESTE que se copia antes de apagar (nunca lança)
+     exportText(S)     → texto do save que seria gravado agora (para baixar quando não dá para gravar; não grava)
      save(S)           → { ok:true } | { ok:false, error }   error.name: 'Conflict' (outra aba salvou/apagou depois) · 'FutureSchema' (o slot tem
                          um save de versão mais nova: nunca é sobrescrito) · erro do storage (cota, bloqueio)
      removeMain()      apaga slot + bak + tmp (o legado e as cópias ficam); no slot 1 também encerra a importação do legado (não ressuscita)
@@ -182,6 +184,17 @@ function createSaveManager(adapter, opts = {}) {
     return !raw ? { raw: null, rev: 0 } : { raw, rev: revOfRaw(raw) };      // texto vazio = ausente (igual ao load)
   }
   const peek = () => { try { return storedInfo(); } catch (e) { return { raw: null, rev: 0 }; } };
+  /* O texto que o jogo PERDERIA se o slot fosse apagado: o mesmo que load() usaria (slot legível ou futuro → senão bak → senão tmp → senão o primeiro que existir).
+     peek() só olha o slot, e removeMain() apaga também bak/tmp: com o slot danificado ou ausente, copiar só o peek() guardava lixo (ou nada) e destruía o único jogo legível. Nunca lança. */
+  function peekBest() {
+    try {
+      const s = readSafe(K.slot), b = readSafe(K.bak), t = readSafe(K.tmp), first = s !== null ? parse(s) : null;
+      if (first && (first.status === 'ok' || first.reason === 'future')) return { raw: s, rev: revOfRaw(s) };
+      for (const raw of [b, t]) if (raw !== null && parse(raw).status === 'ok') return { raw, rev: revOfRaw(raw) };
+      const raw = s !== null ? s : (b !== null ? b : t);
+      return raw === null ? { raw: null, rev: 0 } : { raw, rev: revOfRaw(raw) };
+    } catch (e) { return { raw: null, rev: 0 }; }
+  }
   const namedError = (name, msg) => { const e = new Error(msg); e.name = name; return e; };
 
   /* ---------- meta (marcadores do legado) ---------- */
@@ -319,6 +332,9 @@ function createSaveManager(adapter, opts = {}) {
     return out;
   }
 
+  /* Texto do save que SERIA gravado agora (para o jogador baixar quando não dá para gravar). Não grava nada. */
+  function exportText(S) { need().prepare(S); return JSON.stringify(wrap(need().persist(S), cur, session.rev + 1)); }
+
   const sessionApi = {
     reset() { session.rev = 0; session.known = false; session.stale = false; session.active = false; session.allowFuture = false; },       // início de uma partida
     adopt(loaded) { const ok = !!loaded && loaded.status === 'ok'; session.rev = ok ? loaded.rev : 0; session.known = ok && loaded.persisted !== false; session.active = true; markLast(); },   // "Continuar" iniciou
@@ -389,7 +405,7 @@ function createSaveManager(adapter, opts = {}) {
     save(obj) { try { adapter.write(K.cfg, JSON.stringify(obj)); } catch (e) { /* ignore */ } },
   };
 
-  return { SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, configure, kit, deepMerge, load, peek, save, removeMain, useSlot, slots, lastSlot, slot: () => cur, copies, session: sessionApi, cfg, external,
+  return { SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, configure, kit, deepMerge, load, peek, peekBest, exportText, save, removeMain, useSlot, slots, lastSlot, slot: () => cur, copies, session: sessionApi, cfg, external,
     format: { MAGIC: SAVE_MAGIC, wrap, inspect, fnv1a, keys: K } };
 }
 

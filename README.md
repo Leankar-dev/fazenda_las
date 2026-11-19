@@ -38,6 +38,9 @@ A tela inicial mostra **3 cartões de jogo** (personagem, nome, dia, ouro e há 
 - **Continuar** abre o jogo **pausado** (menu de pausa aberto): feche com **Esc** ou **Continuar** quando estiver pronto.
 - **Esc → Trocar de jogo** salva e volta à tela inicial para escolher outro cartão.
 - **Apagar** e **Novo jogo** sobre um jogo existente guardam antes uma cópia de segurança neste navegador (as 3 mais recentes, de todos os jogos); se não couber, o jogo oferece baixar o arquivo antes.
+  Num jogo **recuperado** (slot danificado, versão anterior boa) a cópia é a da versão legível, não a do arquivo danificado.
+- **Trocar de jogo** nunca descarta progresso em silêncio: se não der para salvar (outra aba salvou depois, ou o jogo está salvo numa versão mais nova), o jogo mostra o aviso e as opções (usar esta aba, baixar cópia, sair mesmo assim).
+- O título da aba é sempre **FAZENDA LAS** (não leva mais o nome do personagem, já que há 3 jogos).
 
 ## Arquivos
 - `assets/fazendeiro/` – sprites do Elias (recortados de `docs/imagem_fazendeiro.jpeg`)
