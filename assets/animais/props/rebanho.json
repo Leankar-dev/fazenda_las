@@ -1,0 +1,253 @@
+{
+ "facing": "frente/3-4 (como as demais props)",
+ "upMax": 1.25,
+ "items": {
+  "tesoura_tosa": {
+   "size": [
+    80,
+    68
+   ],
+   "group": "ovelha",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "tesoura de tosa + novelo (rótulo: \"Ball of Wooltearer\")"
+  },
+  "fardos_feno": {
+   "size": [
+    96,
+    95
+   ],
+   "group": "ovelha",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "pilha de fardos de FENO/palha (rótulo: \"Stack of Wool\"; a imagem não é lã)"
+  },
+  "cocho_ovelha": {
+   "size": [
+    112,
+    79
+   ],
+   "group": "ovelha",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "cocho de metal"
+  },
+  "estacao_tosquia": {
+   "size": [
+    128,
+    71
+   ],
+   "group": "ovelha",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "plataforma de tosquia (piso de tábuas com esteira)"
+  },
+  "portao_aprisco": {
+   "size": [
+    87,
+    112
+   ],
+   "group": "ovelha",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "portão de madeira"
+  },
+  "coelheira": {
+   "size": [
+    107,
+    112
+   ],
+   "group": "coelho",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "casinha de madeira"
+  },
+  "bebedouro_coelho": {
+   "size": [
+    69,
+    88
+   ],
+   "group": "coelho",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "garrafa d'água com bico + cenouras"
+  },
+  "tigela_racao": {
+   "size": [
+    56,
+    45
+   ],
+   "group": "coelho",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "tigela de metal com ração (rótulo: \"Carrot Bundle\")"
+  },
+  "toca_coelho": {
+   "size": [
+    80,
+    37
+   ],
+   "group": "coelho",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "buraco na terra (rótulo: \"Rabbit Food Bowl\")"
+  },
+  "canteiro_alface": {
+   "size": [
+    88,
+    49
+   ],
+   "group": "coelho",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "alface em canteiro de terra"
+  },
+  "pegadas_coelho": {
+   "size": [
+    40,
+    29
+   ],
+   "group": "cenario",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "pegadas (contraste baixo na folha)"
+  },
+  "la_bruta": {
+   "size": [
+    64,
+    50
+   ],
+   "group": "produto",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "lã bruta (nuvem de lã)"
+  },
+  "fio_la": {
+   "size": [
+    52,
+    64
+   ],
+   "group": "produto",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "carretel de fio (rótulo: \"Wool Yarn\")"
+  },
+  "pele_coelho": {
+   "size": [
+    64,
+    58
+   ],
+   "group": "produto",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "PELE CRUA do coelho (pelo claro); o rótulo é \"Rabbit Pelt\""
+  },
+  "carne_coelho": {
+   "size": [
+    64,
+    43
+   ],
+   "group": "produto",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "pernil de coelho"
+  },
+  "queijo": {
+   "size": [
+    64,
+    53
+   ],
+   "group": "produto",
+   "source": "docs/oficina.jpeg",
+   "note": "queijo com fatia (da folha oficina.jpeg: mais detalhado que o do bloco 3)"
+  },
+  "pele_curtida": {
+   "size": [
+    64,
+    43
+   ],
+   "group": "produto",
+   "source": "docs/oficina.jpeg",
+   "note": "pele curtida/couro (da folha oficina.jpeg)"
+  },
+  "pasto_tufo": {
+   "size": [
+    96,
+    60
+   ],
+   "group": "cenario",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "retalho de capim (losango isométrico; NÃO é um tile contínuo: use como retalho com feather)"
+  },
+  "trilha_terra": {
+   "size": [
+    104,
+    54
+   ],
+   "group": "cenario",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "retalho de terra batida (mancha irregular; NÃO é um tile contínuo)"
+  },
+  "cerca_arame": {
+   "size": [
+    96,
+    73
+   ],
+   "group": "cenario",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "estaca + estaca com arame, em diagonal (1ª \"Farm Fence\")"
+  },
+  "cerca_estacas": {
+   "size": [
+    96,
+    52
+   ],
+   "group": "cenario",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "duas estacas com arame de frente (2ª \"Farm Fence\")"
+  },
+  "feno_redondo": {
+   "size": [
+    80,
+    69
+   ],
+   "group": "cenario",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "fardo redondo de feno (1º \"Hay Bale\"; o 2º é variação e foi descartado)"
+  },
+  "canteiro_horta": {
+   "size": [
+    112,
+    64
+   ],
+   "group": "cenario",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "canteiro de terra para hortaliças"
+  },
+  "regador_pequeno": {
+   "size": [
+    64,
+    59
+   ],
+   "group": "cenario",
+   "source": "docs/ovelhas_coelhos.jpeg",
+   "note": "regador de metal"
+  },
+  "oficina": {
+   "size": [
+    176,
+    129
+   ],
+   "group": "oficina",
+   "source": "docs/oficina.jpeg",
+   "note": "bancada com roca de fiar, novelo, queijo e pele no cavalete; pegada 3 x 2 tiles"
+  },
+  "oficina_anim": {
+   "size": [
+    1056,
+    129
+   ],
+   "group": "oficina",
+   "source": "docs/oficina.jpeg",
+   "cell": [
+    176,
+    129
+   ],
+   "frames": 6,
+   "loop": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "note": "roda de fiar girando; grade 6 x 1; 6 quadros x 7,5 graus = 45 graus = um raio (laço perfeito)"
+  }
+ }
+}

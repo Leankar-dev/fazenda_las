@@ -108,6 +108,20 @@ test('personagens: walk_sheet.png × walk_sheet.json × constantes WALKERS do ga
   assert.ok(Object.values(K.loop).every(l => l.length === 5), 'fazendeira: ciclo real de 5 quadros (nenhum repete o 1º)');
   assert.ok(!/BODY_SPRITES|front_stand|drawSide|drawFrontBack|walker: true/.test(game), 'sobrou código do desenho antigo (sprites estáticos com pernas giradas)');
 });
+test('rebanho (arte): sheets da ovelha e do coelho e props — cada PNG existe, é RGBA e tem o tamanho que o json declara; a grade das sheets fecha; a pasta não tem sobras', () => {
+  for (const [animal, rows] of [['ovelha', 10], ['coelho', 8]]) {
+    const dir = path.join(ROOT, 'assets', 'animais', animal), meta = JSON.parse(fs.readFileSync(path.join(dir, 'sheet.json'), 'utf8')), png = pngInfo(path.join(dir, 'sheet.png'));
+    assert.strictEqual(png.colorType, 6, animal + ': RGBA'); assert.deepStrictEqual([png.w, png.h], [meta.cell[0] * meta.columns, meta.cell[1] * meta.rows.length], animal + ': tamanho do PNG == célula x grade');
+    assert.strictEqual(meta.rows.length, rows, animal + ': linhas');
+    for (const r of meta.rows) { assert.ok(meta.frames[r] >= 1 && meta.frames[r] <= meta.columns, animal + '/' + r + ': quadros na grade'); assert.ok(meta.footprintWidth[r] > 0 && meta.footprintWidth[r] <= meta.cell[0], animal + '/' + r + ': pegada cabe na célula'); for (const f of meta.loop[r]) assert.ok(f < meta.frames[r], animal + '/' + r + ': laço dentro dos quadros'); }
+    const ic = pngInfo(path.join(dir, 'icon.png')); assert.deepStrictEqual([ic.w, ic.h], [96, 96], animal + ': ícone da loja 96x96');
+    assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['icon.png', 'sheet.json', 'sheet.png'], animal + ': a pasta tem EXATAMENTE o que o jogo usa');
+  }
+  const pd = path.join(ROOT, 'assets', 'animais', 'props'), pm = JSON.parse(fs.readFileSync(path.join(pd, 'rebanho.json'), 'utf8')).items;
+  for (const [name, it] of Object.entries(pm)) { const png = pngInfo(path.join(pd, name + '.png')); assert.strictEqual(png.colorType, 6, name + ': RGBA'); assert.deepStrictEqual([png.w, png.h], it.size, name + ': tamanho do PNG == rebanho.json'); assert.ok(it.group && it.source && it.note, name + ': metadados'); }
+  const an = pm.oficina_anim; assert.strictEqual(an.cell[0] * an.frames, an.size[0]); assert.deepStrictEqual(an.cell, pm.oficina.size, 'quadros da oficina têm o tamanho da oficina parada');
+  for (const n of ['tesoura_tosa', 'fardos_feno', 'cocho_ovelha', 'estacao_tosquia', 'portao_aprisco', 'coelheira', 'bebedouro_coelho', 'tigela_racao', 'toca_coelho', 'canteiro_alface', 'la_bruta', 'fio_la', 'pele_coelho', 'carne_coelho', 'queijo', 'pele_curtida', 'oficina']) assert.ok(pm[n], 'falta o item do plano: ' + n);
+});
 test('casa: casa.png × casa.json × constantes HOUSE_ART do game.js batem; o celeiro procedural foi removido do art.js', () => {
   const meta = JSON.parse(fs.readFileSync(path.join(ROOT, 'assets', 'casa.json'), 'utf8')), png = pngInfo(path.join(ROOT, 'assets', 'casa.png'));
   assert.deepStrictEqual([png.w, png.h], meta.size); assert.strictEqual(png.colorType, 6, 'RGBA (fundo transparente)');
