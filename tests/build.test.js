@@ -85,7 +85,7 @@ test('cavalo: walk_sheet.png, walk_sheet.json e as constantes HORSE do animais.j
 test('cavalo: os 7 PNGs antigos foram removidos e a loja usa o ícone novo', () => {
   const dir = path.join(ROOT, 'assets', 'animais', 'cavalo'), left = fs.readdirSync(dir).sort();
   assert.deepStrictEqual(left, ['icon.png', 'walk_sheet.json', 'walk_sheet.png'], 'sobrou arquivo antigo: ' + left);
-  const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'); assert.ok(game.includes("cavalo/icon.png") && !/cavalo\/(front|back|profile|bottomup)/.test(game + fs.readFileSync(path.join(ROOT, 'animais.js'), 'utf8')), 'ninguém cita os sprites antigos');
+  const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'), animais = fs.readFileSync(path.join(ROOT, 'animais.js'), 'utf8'); assert.ok(animais.includes("cavalo/icon.png") && !/cavalo\/(front|back|profile|bottomup)/.test(game + animais), 'ninguém cita os sprites antigos');
 });
 test('personagens: walk_sheet.png × walk_sheet.json × constantes WALKERS do game.js batem nos DOIS (grade, altura, laço, repouso); pastas só com o que o jogo usa', () => {
   const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'), blk = /const WALKERS = (\{[\s\S]*?\n  \});/.exec(game); assert.ok(blk, 'bloco WALKERS no game.js');
@@ -121,6 +121,23 @@ test('rebanho (arte): sheets da ovelha e do coelho e props — cada PNG existe, 
   for (const [name, it] of Object.entries(pm)) { const png = pngInfo(path.join(pd, name + '.png')); assert.strictEqual(png.colorType, 6, name + ': RGBA'); assert.deepStrictEqual([png.w, png.h], it.size, name + ': tamanho do PNG == rebanho.json'); assert.ok(it.group && it.source && it.note, name + ': metadados'); }
   const an = pm.oficina_anim; assert.strictEqual(an.cell[0] * an.frames, an.size[0]); assert.deepStrictEqual(an.cell, pm.oficina.size, 'quadros da oficina têm o tamanho da oficina parada');
   for (const n of ['tesoura_tosa', 'fardos_feno', 'cocho_ovelha', 'estacao_tosquia', 'portao_aprisco', 'coelheira', 'bebedouro_coelho', 'tigela_racao', 'toca_coelho', 'canteiro_alface', 'la_bruta', 'fio_la', 'pele_coelho', 'carne_coelho', 'queijo', 'pele_curtida', 'oficina']) assert.ok(pm[n], 'falta o item do plano: ' + n);
+});
+test('ovelha e coelho: sheet.png × sheet.json × constantes SHEEP/RABBIT do animais.js batem (célula, grade, linhas, pegada, quadros, repouso); recintos cabem no mapa', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'animais.js'), 'utf8');
+  for (const [animal, NAME] of [['ovelha', 'SHEEP'], ['coelho', 'RABBIT']]) {
+    const blk = new RegExp('const ' + NAME + ' = (\\{[\\s\\S]*?\\n  \\});').exec(src); assert.ok(blk, 'bloco ' + NAME + ' no animais.js');
+    const C = new Function('return ' + blk[1])(), meta = JSON.parse(fs.readFileSync(path.join(ROOT, 'assets', 'animais', animal, 'sheet.json'), 'utf8'));
+    assert.deepStrictEqual(C.cell, meta.cell, NAME + ': célula'); assert.strictEqual(C.cols, meta.columns, NAME + ': colunas'); assert.strictEqual(C.ref, meta.bodyHeight, NAME + ': altura de referência');
+    assert.deepStrictEqual(Object.keys(C.rows), meta.rows, NAME + ': nomes das linhas, na ordem'); meta.rows.forEach((n, i) => assert.strictEqual(C.rows[n], i, NAME + ': linha ' + n));
+    assert.deepStrictEqual(C.foot, meta.footprintWidth, NAME + ': pegada da sombra'); assert.deepStrictEqual(C.frames, meta.frames, NAME + ': quadros por linha'); assert.strictEqual(C.idle, 0); assert.strictEqual(meta.idle[meta.rows[0]], 0);
+    if (animal === 'coelho') { assert.deepStrictEqual(C.hop, meta.loop.right, 'laço do pulo'); assert.deepStrictEqual(C.air, [meta.hopFrames.launch, meta.hopFrames.apex, meta.hopFrames.fall], 'quadros no ar'); }
+    else { assert.deepStrictEqual(C.loop.walk, meta.loop.right, 'laço de andar'); assert.deepStrictEqual(C.loop.eat, meta.loop.eat_left, 'laço de pastar'); }
+  }
+  const pens = /const PENS = \{[\s\S]*?\n  \};/.exec(src); assert.ok(pens, 'PENS no animais.js');
+  const areas = [...pens[0].matchAll(/area: \{ x0: (\d+), y0: (\d+), x1: (\d+), y1: (\d+) \}/g)].map(m => m.slice(1).map(Number)); assert.strictEqual(areas.length, 3, '3 recintos');
+  const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'), mm = /MW = (\d+), MH = (\d+);/.exec(game); const [MW, MH] = [+mm[1], +mm[2]];
+  for (const [x0, y0, x1, y1] of areas) assert.ok(x0 >= 3 && y0 >= 6 && x1 <= MW - 2 && y1 <= MH - 2, 'o recinto cabe no mapa (sem a moldura): ' + [x0, y0, x1, y1]);
+  for (let i = 0; i < areas.length; i++) for (let j = i + 1; j < areas.length; j++) { const a = areas[i], c = areas[j]; assert.ok(a[2] < c[0] || c[2] < a[0] || a[3] < c[1] || c[3] < a[1], 'recintos ' + i + ' e ' + j + ' não se sobrepõem'); }
 });
 test('casa: casa.png × casa.json × constantes HOUSE_ART do game.js batem; o celeiro procedural foi removido do art.js', () => {
   const meta = JSON.parse(fs.readFileSync(path.join(ROOT, 'assets', 'casa.json'), 'utf8')), png = pngInfo(path.join(ROOT, 'assets', 'casa.png'));

@@ -117,11 +117,7 @@
   const SLEEP_FROM = 18 * 60;                           // só dá para dormir a partir das 18:00
   const MAX_BUSH = 140;                                 // limite de mato no mapa (nasce mato novo toda noite)
   const N_CHICKENS = 6;                                  // galinhas no galinheiro (botam ovos 2× por dia)
-  const ANIMAL_SHOP = {
-    vaca:   { name: 'Vaca',   cost: 260, max: 4, img: 'assets/animais/vaca/front34.png',   info: 'Dá leite todo dia (vende 42 ◎). Ordenhe com E.' },
-    porco:  { name: 'Porco',  cost: 180, max: 4, img: 'assets/animais/porco/front34.png',  info: 'Dá carne 2× por dia (vende 30 ◎) e acha trufas (80 ◎). Pegue com E.' },
-    cavalo: { name: 'Cavalo', cost: 650, max: 2, img: 'assets/animais/cavalo/icon.png', info: 'Monte com E e cavalgue quase 2× mais rápido.' },
-  };
+  const ANIMAL_SHOP = Animals.shopCatalog();            // preço, limite, ícone e texto de cada bicho à venda moram em animais.js (KINDS[k].shop)
   const GOALS = [
     { at: 400,   reward: { seeds: { tomate: 6 } },  text: 'Sementes de tomate liberadas! (+6)' },
     { at: 1500,  reward: { seeds: { milho: 6 } },   text: 'Sementes de milho liberadas! (+6)' },
@@ -174,6 +170,7 @@
   const groundVar = new Uint8Array(MW * MH);
   const trees = [];
   const treeGrid = new Array(MW * MH).fill(null);
+  const legacySolid = new Uint8Array(MW * MH);      // o `solid` do mundo ANTIGO logo depois de gerado (antes dos recintos de hoje): o sorteio dos obstáculos antigos tem de ver o mesmo
   const legacyTree = new Uint8Array(MW * MH);      // 1 = aqui o mapa ANTIGO tinha árvore (mesmo as que o mapa novo afinou): o gerador de obstáculos do mapa antigo precisa pular as mesmas células, para sortear igual
   let obs = [];
   const obsGrid = new Array(MW * MH).fill(null);
@@ -219,7 +216,7 @@
     const r = Art.mulberry32(1234);
     const mark = (rect) => { for (let y = rect.y; y < rect.y + rect.h; y++) for (let x = rect.x; x < rect.x + rect.w; x++) solid[idx(x, y)] = 1; };
     [HOUSE, STALL, SIGN, BIN, WELL, COOP].forEach(mark);
-    Animals.markSolid(solid, MW);
+    Animals.markSolidLegacy(solid, MW);      // só o curral ANTIGO: o gerador do mundo antigo tem de enxergar o que enxergava (mapa-golden)
     const plant = (x, y, tv) => { const i = idx(x, y); if (felled.has(x + ',' + y)) return; solid[i] = 1; const tr = { x, y, v: tv, border: x === 0 || y === 0 || x === MW - 1 || y === MH - 1, hp: 5 }; trees.push(tr); treeGrid[i] = tr; };
     // CAMADA 1 — o mapa ANTIGO (46 × 34), exatamente como era: mesma ordem, mesmos sorteios (cada célula consome o gerador igual, mesmo as que depois são descartadas), para que as árvores e o
     // mato do mapa antigo (e as `felled` de um save) continuem valendo. tests: cenário `mapa-golden` × tests/fixtures/mapa_golden_46x34.json.
@@ -240,7 +237,7 @@
         else if (x >= 30 && y <= 3 && !nearPond) forest = r() < .4;
         if (nearPond && r() < .06 && !isPath(x, y) && !isWater(x, y) && Math.hypot(x - POND.cx, (y - POND.cy) * 1.3) > POND.rx + .6) forest = true;
       }
-      if (Animals.inArea(x, y, 1)) forest = false;
+      if (Animals.inLegacyArea(x, y, 1)) forest = false;
       if (!border && inRect(dockZone, x, y)) forest = false;
       if (border || forest) {
         const tv = Math.floor(r() * 3);                       // (sempre sorteia, para o mapa não mudar)
@@ -252,6 +249,7 @@
         plant(x, y, tv);
       }
     }
+    legacySolid.set(solid);
     // CAMADA 2 — o terreno NOVO (leste e sul), com gerador próprio: moldura nova, faixa de mata nas bordas novas e árvores esparsas; as áreas reservadas ficam limpas.
     const rn = Art.mulberry32(4711);
     for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
@@ -269,6 +267,10 @@
       }
       if (border || forest) plant(x, y, Math.floor(rn() * 3));
     }
+    // CAMADA 3 — os recintos de HOJE (curral ampliado, pasto, coelheira) e o corredor entre eles: sem árvores; as cercas e decorações ANTIGAS saem e as novas entram (Fase 4 do plano das ovelhas)
+    Animals.relayout(solid, MW);
+    for (let k = trees.length - 1; k >= 0; k--) { const t = trees[k]; if (!t.border && Animals.keepClear(t.x, t.y)) { solid[idx(t.x, t.y)] = 0; treeGrid[idx(t.x, t.y)] = null; trees.splice(k, 1); } }
+    Animals.markSolid(solid, MW);
     trees.sort((a, b) => a.y - b.y);
     // variação do chão
     const r2 = Art.mulberry32(99);
@@ -280,7 +282,7 @@
      próprio. Um save antigo já tem `S.obs` só do mapa antigo: `genNewLandObstacles()` completa o terreno novo uma única vez (S.world 2 → 3). */
   function genObstacles() {
     const list = [], r = Art.mulberry32(777);
-    for (let y = 6; y < LEGACY_MH - 2; y++) for (let x = 2; x < LEGACY_MW - 2; x++) { if (legacyTree[idx(x, y)]) continue; obstacleAt(list, r, x, y); }      // (as células de árvore do mapa antigo continuam "ocupadas", afinadas ou não)
+    for (let y = 6; y < LEGACY_MH - 2; y++) for (let x = 2; x < LEGACY_MW - 2; x++) { if (legacyTree[idx(x, y)]) continue; obstacleAt(list, r, x, y, legacySolid); }      // (as células de árvore do mapa antigo continuam "ocupadas", afinadas ou não)
     return list.concat(genNewLandObstacles());
   }
   function genNewLandObstacles() {
@@ -288,17 +290,17 @@
     for (let y = 6; y < MH - 2; y++) for (let x = 2; x < MW - 2; x++) {
       if (x < LEGACY_MW - 2 && y < LEGACY_MH - 2) continue;       // essa região é do gerador antigo
       if (inReserved(x, y)) continue;
-      obstacleAt(list, r, x, y);
+      obstacleAt(list, r, x, y, solid);
     }
     return list;
   }
-  function obstacleAt(list, r, x, y) {
-    if (solid[idx(x, y)] || isPath(x, y)) return;
+  function obstacleAt(list, r, x, y, solidMap) {
+    if (solidMap[idx(x, y)] || isPath(x, y)) return;
     if (Math.hypot(x - POND.cx, (y - POND.cy) * 1.2) < POND.rx + 1.3) return;
     if (x >= PLOT.x0 - 1 && x <= PLOT.x1 + 1 && y >= PLOT.y0 - 1 && y <= PLOT.y1 + 1) return;
     if (x >= 5 && x <= 12 && y <= 7) return;
     if (inRect({ x: COOP.x - 1, y: COOP.y - 1, w: 4, h: 5 }, x, y)) return;
-    if (Animals.inArea(x, y, 2)) return;
+    if (isLegacyCell(x, y) ? Animals.inLegacyArea(x, y, 2) : Animals.inAnyPen(x, y, 2)) return;      // (o mapa antigo sorteia como antes; o terreno novo já conta os recintos novos)
     if (inRect(dockZone, x, y)) return;
     const q = r();
     if (q < .03) list.push(['rock', x, y, Math.floor(r() * 2), 3]);
@@ -1511,7 +1513,7 @@
     { n: 'Casa', e: '🏠', x: HOUSE.x + HOUSE.w / 2, y: HOUSE.y + HOUSE.h - .5 }, { n: 'Empório', e: '🛒', x: STALL.x + STALL.w / 2, y: STALL.y + 1 },
     { n: 'Caixa de vendas', e: '📦', x: BIN.x + BIN.w / 2, y: BIN.y + .5 }, { n: 'Poço', e: '💧', x: WELL.x + WELL.w / 2, y: WELL.y + 1 },
     { n: 'Galinheiro', e: '🐔', x: COOP.x + COOP.w / 2, y: COOP.y + 1 }, { n: 'Lago', e: '🎣', x: POND.cx, y: POND.cy },
-    { n: 'Curral', e: '🐄', x: (Animals.IN.x0 + Animals.IN.x1) / 2, y: (Animals.IN.y0 + Animals.IN.y1) / 2 },
+    ...Animals.PEN_LIST.map(p => ({ n: p.name, e: { curral: '🐄', pasto: '🐑', coelheira: '🐇' }[p.id] || '🐾', x: (p.in.x0 + p.in.x1 + 1) / 2, y: (p.in.y0 + p.in.y1 + 1) / 2 })),
   ];
   const MAP_COL = { grass: '#6e9f47', water: '#4a90c8', tree: '#2c5a28', rock: '#8c8c8c', stump: '#7a5a3a', ftree: '#3f7d35', bush: '#58893a', build: '#9a6a3a', path: '#cda56e', till: '#7a5230', wet: '#4a3020', fence: '#b98350', pen: '#c9b87a' };
   function mapTileColor(x, y) {
@@ -2532,7 +2534,7 @@
     if (S.world < 3) { for (const o of genNewLandObstacles()) if (!obsAt(o[1], o[2])) addObs(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]); }      // save do mapa antigo: povoa o terreno novo (uma vez)
     S.world = 3;
     // limpar obstáculos sobre solo/ cultivo inválido
-    for (const o of [...obs]) if (solid[idx(o.x, o.y)] || (o.type === 'bush' && (Animals.inArea(o.x, o.y, 0) || inRect(COOP, o.x, o.y)))) removeObs(o);   // (também limpa mato que saves antigos deixaram no curral)
+    for (const o of [...obs]) if (solid[idx(o.x, o.y)] || (o.type === 'ftree' ? Animals.inAnyPen(o.x, o.y, 0) : Animals.keepClear(o.x, o.y)) || (o.type === 'bush' && inRect(COOP, o.x, o.y))) removeObs(o);      // (frutíferas só saem de DENTRO dos recintos: uma que o jogador plantou ao lado fica)   // (também limpa mato que saves antigos deixaram no curral)
     buildGround();
     spawnChickens();
     Animals.bind({ P, blocked, isWater, boxBlocked, shadow: Art.shadow, Snd, heart, takeTruffle, time: () => time, MW, MH, icons: ICONS_CANVAS,

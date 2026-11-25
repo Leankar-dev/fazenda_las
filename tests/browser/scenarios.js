@@ -1032,10 +1032,11 @@
     async run() {
       await bootReady(); const G = await startNew(0), gold = JSON.parse(F.mapa_golden_46x34), key = a => a.join(',');
       const OW = gold.MW, OH = gold.MH, MW = G.MW, MH = G.MH, edge = (x, y) => x === OW - 1 || y === OH - 1;
+      const kc = (x, y) => G.Animals.keepClear(x, y);      // Fase 4: os recintos (curral ampliado, pasto, coelheira) e o corredor foram LIMPOS de árvore/mato de propósito: ficam fora da comparação
       ok('o mapa tem 64 × 49 (o dobro da área) e o golden é 46 × 34', MW === 64 && MH === 49 && OW === 46 && OH === 34 && MW * MH >= 2 * OW * OH * .99, MW + 'x' + MH);
       const treeSet = new Set(G.trees.map(t => key([t.x, t.y, t.v])));
       // 1) região antiga fora da faixa de 3 tiles (x < 43 e y < 31): árvores IDÊNTICAS, nas duas direções
-      const goldInner = gold.trees.filter(t => t[0] < OW - 3 && t[1] < OH - 3), newInner = G.trees.filter(t => t.x < OW - 3 && t.y < OH - 3);
+      const goldInner = gold.trees.filter(t => t[0] < OW - 3 && t[1] < OH - 3 && !kc(t[0], t[1])), newInner = G.trees.filter(t => t.x < OW - 3 && t.y < OH - 3 && !kc(t.x, t.y));
       ok('árvores do mapa antigo (fora da faixa leste/sul): as mesmas, nenhuma a mais, nenhuma a menos', goldInner.length === newInner.length && goldInner.every(t => treeSet.has(key(t.slice(0, 3)))), goldInner.length + ' / ' + newInner.length);
       // 2) a faixa: só sobram árvores que já existiam (afinou), e a antiga moldura (x=45, y=33) virou passagem
       const gset = new Set(gold.trees.map(t => key(t.slice(0, 3))));
@@ -1048,11 +1049,12 @@
       ok('a moldura oeste e norte (x=0, y=0 e os cantos) continua inteira', gold.trees.filter(t => t[0] === 0 || t[1] === 0).every(t => treeSet.has(key(t.slice(0, 3)))));
       // 3) obstáculos antigos: TODOS iguais (mesmo gerador, mesma ordem)
       const nobs = new Map(G.obs.map(o => [o.x + ',' + o.y, o])); let same = 0; const diff = [];
-      for (const o of gold.obs) { const n = nobs.get(o[1] + ',' + o[2]); if (n && n.type === o[0] && n.v === o[3] && n.hp === o[4]) same++; else diff.push(o); }
-      ok('os ' + gold.obs.length + ' obstáculos do mapa antigo estão todos no mapa novo, iguais', same === gold.obs.length, diff.slice(0, 3).map(String).join(' | '));
+      const goldObs = gold.obs.filter(o => !kc(o[1], o[2]));
+      for (const o of goldObs) { const n = nobs.get(o[1] + ',' + o[2]); if (n && n.type === o[0] && n.v === o[3] && n.hp === o[4]) same++; else diff.push(o); }
+      ok('os ' + goldObs.length + ' obstáculos do mapa antigo (fora dos recintos) estão todos no mapa novo, iguais', same === goldObs.length, diff.slice(0, 3).map(String).join(' | '));
       // 4) mapa de bloqueios idêntico na região segura
-      let bad = 0; for (let y = 0; y < OH - 3; y++) for (let x = 0; x < OW - 3; x++) { const c = G.blocked(x, y) ? '#' : '.'; if (c !== gold.blocked[y][x]) bad++; }
-      ok('mapa de tiles bloqueados da região antiga (x < 43, y < 31) idêntico ao golden', bad === 0, bad + ' diferenças');
+      let bad = 0; for (let y = 0; y < OH - 3; y++) for (let x = 0; x < OW - 3; x++) { if (kc(x, y)) continue; const c = G.blocked(x, y) ? '#' : '.'; if (c !== gold.blocked[y][x]) bad++; }
+      ok('mapa de tiles bloqueados da região antiga (x < 43, y < 31, fora dos recintos) idêntico ao golden', bad === 0, bad + ' diferenças');
       // 5) terreno novo
       ok('moldura nova (x=63 e y=48) inteira', [...Array(MH).keys()].every(y => G.blocked(MW - 1, y)) && [...Array(MW).keys()].every(x => G.blocked(x, MH - 1)));
       const newLand = G.obs.filter(o => o.x >= OW || o.y >= OH), newTrees = G.trees.filter(t => (t.x >= OW || t.y >= OH) && t.x < MW - 1 && t.y < MH - 1);
@@ -1089,6 +1091,61 @@
     },
   };
 
+  /* ---------- Fase 4 do plano das ovelhas: recintos por dados (curral ampliado, pasto das ovelhas, coelheira) ---------- */
+  S_['recintos'] = {
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(0), A = G.Animals, S = G.S, P = A.PENS;
+      ok('3 recintos: curral, pasto, coelheira', JSON.stringify(Object.keys(P)) === '["curral","pasto","coelheira"]');
+      ok('o curral cresceu para o sul (y 16–31; era 16–27) e o interior é a área menos a cerca', P.curral.area.y1 === 31 && P.curral.in.y1 === 30 && P.curral.in.x0 === 31 && P.curral.in.x1 === 43);
+      ok('pasto 47–62 × 16–30 e coelheira 47–58 × 33–42 (cabem no mapa e não se tocam)', P.pasto.area.x1 < G.MW - 1 && P.coelheira.area.y1 < G.MH - 1 && P.pasto.area.y1 < P.coelheira.area.y0 && P.curral.area.x1 < P.pasto.area.x0);
+      // cercas sólidas, portões e interior livres (fora a decoração sólida)
+      let fenceBad = 0, gateBad = 0, inBlockedNoDecor = 0;
+      for (const p of A.PEN_LIST) {
+        const decor = new Set(); for (const d of p.decor) if (d.solid !== false) for (let i = 0; i < d.tw; i++) decor.add((d.tx + i) + ',' + d.ty);
+        for (let y = p.area.y0; y <= p.area.y1; y++) for (let x = p.area.x0; x <= p.area.x1; x++) {
+          const isGate = p.gates.some(g => x === g.x && y >= g.y0 && y <= g.y1), inside = x >= p.in.x0 && x <= p.in.x1 && y >= p.in.y0 && y <= p.in.y1;
+          if (!inside && !isGate && !G.blocked(x, y)) fenceBad++;
+          if (isGate && G.blocked(x, y)) gateBad++;
+          if (inside && !decor.has(x + ',' + y) && G.blocked(x, y)) inBlockedNoDecor++;
+        }
+      }
+      ok('toda a cerca é sólida, todo portão é passagem e o interior não tem árvore, pedra nem mato', fenceBad === 0 && gateBad === 0 && inBlockedNoDecor === 0, fenceBad + '/' + gateBad + '/' + inBlockedNoDecor);
+      // corredor livre e alcançável: a pé, do ponto de partida até o meio de cada recinto, só por portões
+      const free = (x, y) => x >= 0 && y >= 0 && x < G.MW && y < G.MH && !G.blocked(x, y);
+      const reach = (sx, sy) => { const seen = new Set([sx + ',' + sy]), q = [[sx, sy]]; while (q.length) { const [x, y] = q.shift(); for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy, k = nx + ',' + ny; if (!seen.has(k) && free(nx, ny) && !(G.POND && 0)) { seen.add(k); q.push([nx, ny]); } } } return seen; };
+      const R = reach(8, 7), mid = p => [Math.floor((p.in.x0 + p.in.x1) / 2), Math.floor((p.in.y0 + p.in.y1) / 2)];
+      for (const id of ['curral', 'pasto', 'coelheira']) { const [mx, my] = mid(P[id]); let ok_ = R.has(mx + ',' + my); if (!ok_) for (let dy = -2; dy <= 2 && !ok_; dy++) for (let dx = -2; dx <= 2 && !ok_; dx++) ok_ = R.has((mx + dx) + ',' + (my + dy)); ok('a pé dá para chegar ao meio do ' + id + ' saindo da casa', ok_); }
+      let corr = 0; for (let y = 16; y <= 42; y++) for (const x of [45, 46]) if (free(x, y)) corr++; ok('o corredor x=45..46 (y 16–42) está livre de árvore e mato', corr === 27 * 2, corr);
+      ok('nenhuma árvore nos recintos e no corredor (a moldura do mapa não conta)', !G.trees.some(t => !t.border && A.keepClear(t.x, t.y)));
+      // lotação máxima do curral: 4 vacas, 4 porcos, 2 cavalos — todos nascem DENTRO do curral, em tile livre
+      for (const [k, n] of [['vaca', 4], ['porco', 4], ['cavalo', 2]]) while (S.owned[k] < n) { S.owned[k]++; A.add(k); }
+      const inPen = (a, p) => { const tx = Math.floor(a.x / 64), ty = Math.floor(a.y / 64); return tx >= p.in.x0 && tx <= p.in.x1 && ty >= p.in.y0 && ty <= p.in.y1 && !G.blocked(tx, ty); };
+      const beasts = A.list.filter(a => a.kind !== 'cachorro');
+      ok('lotação máxima: ' + beasts.length + ' bichos nascem dentro do curral, em tile livre', beasts.length === 10 && beasts.every(a => inPen(a, P.curral)), beasts.filter(a => !inPen(a, P.curral)).length + ' fora');
+      steps(G, 400, .1);
+      ok('depois de 40 s andando, todos continuam dentro do curral (a cerca confina)', beasts.every(a => inPen(a, P.curral) || a === A.horse), beasts.filter(a => !inPen(a, P.curral)).map(a => a.kind + ':' + Math.round(a.x / 64) + ',' + Math.round(a.y / 64)).join(' '));
+      // o que o E faz continua igual (refatorado para a tabela de espécies)
+      const cow = A.cows()[0], pig = A.pigs()[0], tile = a => [Math.floor(a.x / 64), Math.floor(a.y / 64)];
+      S.milked = []; S.meatDone = []; S.min = 8 * 60; for (const a of A.list) if (a !== cow) { a.x = 33 * 64; a.y = 18 * 64; } cow.x = 40 * 64; cow.y = 25 * 64; pig.x = 36 * 64; pig.y = 25 * 64;
+      let r = A.at(...tile(cow), S); ok('vaca pronta: "E — Ordenhar" (type vaca)', r && r.type === 'vaca' && r.label === 'E — Ordenhar', JSON.stringify(r && [r.type, r.label]));
+      S.milked[cow.idx] = true; r = A.at(...tile(cow), S); ok('vaca já ordenhada: avisa em vez de oferecer', r && r.type === 'vaca' && r.label === 'Já ordenhada hoje');
+      r = A.at(...tile(pig), S); ok('porco com carne: "E — Pegar carne" (ready)', r && r.type === 'porco' && r.ready === true && r.label === 'E — Pegar carne');
+      S.meatDone[pig.idx] = 1; S.min = 9 * 60; r = A.at(...tile(pig), S); ok('porco sem carne: carinho', r && r.type === 'porco' && r.ready === false && r.label === 'E — Fazer carinho');
+      // compatibilidade com o que o jogo usa e o catálogo da loja vem da tabela
+      ok('IN/AREA/GATE e inArea/inIn/isFence continuam existindo (curral = principal)', A.IN === P.curral.in && A.AREA === P.curral.area && A.inArea(30, 16, 0) && A.inArea(55, 20, 0) && A.inIn(40, 20) && A.isFence(30, 16) && !A.isFence(30, 21));
+      const shop = A.shopCatalog(); ok('a loja: vaca 260/4, porco 180/4, cavalo 650/2 — saiu do animais.js', shop.vaca.cost === 260 && shop.vaca.max === 4 && shop.porco.cost === 180 && shop.cavalo.cost === 650 && shop.cavalo.max === 2 && !shop.ovelha && !shop.coelho);
+      // as sheets da ovelha e do coelho carregam e são fatiadas
+      const sh = A.IMGS.ovelha, rb = A.IMGS.coelho;
+      ok('sheets da ovelha (10 linhas × 6) e do coelho (8 × 6) fatiadas em quadros 116×120 e 120×124', sh.frames && Object.keys(sh.frames).length === 10 && sh.frames.left.length === 6 && sh.frames.left[0].width === 116 && sh.frames.left[0].height === 120 && rb.frames && Object.keys(rb.frames).length === 8 && rb.frames.right[0].width === 120 && rb.frames.right[0].height === 124);
+      const nonEmpty = c => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i] > 40) return true; return false; };
+      ok('os quadros de repouso e de pulo têm pixels (a sheet carregou de verdade)', nonEmpty(sh.frames.left[0]) && nonEmpty(sh.frames.shorn_down[3]) && nonEmpty(rb.frames.right[3]) && nonEmpty(rb.frames.eat_left[1]));
+      ok('o cavalo continua com 4 direções × 5 quadros (IMGS.cavalo.walk)', ['down', 'up', 'left', 'right'].every(d => A.IMGS.cavalo.walk[d].length === 5));
+      steps(G, 60); G.endDay(false); steps(G, 20);
+      ok('passar um dia leva os bichos de volta ao curral e não dá erro', A.list.filter(a => a.kind !== 'cachorro' && a !== A.horse).every(a => inPen(a, P.curral)) && !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
   /* ---------- capturas de tela (usadas à mão: tests/capturas.js; não são testes) ---------- */
   const captura = (cx, cy, openMapToo, zoomOut) => ({
     seed() { T.reset(); },
@@ -1099,7 +1156,7 @@
       ok('pronto', true);
     },
   });
-  S_['captura-casa'] = captura(8.5, 6.5); S_['captura-leste'] = captura(50, 22); S_['captura-sul'] = captura(20, 40); S_['captura-mapa'] = captura(40, 20, true);
+  S_['captura-casa'] = captura(8.5, 6.5); S_['captura-leste'] = captura(50, 22); S_['captura-sul'] = captura(20, 40); S_['captura-mapa'] = captura(40, 20, true); S_['captura-curral'] = captura(38, 26); S_['captura-coelheira'] = captura(52, 38); S_['captura-pasto'] = captura(55, 23);
 
   /* ---------- Fase 1c: 3 slots ---------- */
   const card = n => document.querySelector('.slotCard[data-slot="' + n + '"]');

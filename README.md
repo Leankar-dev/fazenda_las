@@ -16,6 +16,9 @@ Para adicionar outro personagem: crie `assets/<pasta>/` com os mesmos 16 sprites
 ## O mapa
 A fazenda tem **64 × 49 tiles** (o dobro da área que tinha: era 46 × 34; cresceu para **leste e sul**). O terreno novo começa livre, com árvores e pedras espalhadas e áreas reservadas para o pasto das ovelhas, a coelheira e uma segunda horta (em construção, veja `docs/melhorias/ovelhas_coelhos/`). Aperte **G** para ver o mapa inteiro, os lugares e onde você está. Saves antigos abrem normalmente: a terra arada e as plantas ficam onde estavam (o save passou para o schema 3).
 
+## Recintos
+O curral ganhou companhia no terreno novo (Fase 4 do plano das ovelhas): o **pasto das ovelhas** (cerca de arame, capim) e a **coelheira** (cerca de estacas), ligados ao curral por um corredor de terra. Os recintos são dados em `animais.js` (`PENS`); as espécies, uma tabela (`KINDS`). As ovelhas e os coelhos chegam nas próximas fases.
+
 ## Árvores frutíferas e machado
 - O **machado (6)** corta árvores: as do cenário (menos as da borda do mapa), as selvagens e as que você plantou. Rende madeira e deixa um toco (a picareta remove o toco). Árvores cortadas ficam cortadas no save.
 - No **empório** você compra **mudas** de macieira, laranjeira, pessegueiro e limoeiro. Escolha a muda com **Q**, use a ferramenta **3** em terra livre (sem arar). Ela cresce em 4 dias e depois dá 2–4 frutas a cada 3 dias; colha com **E** ou com as luvas.
@@ -23,7 +26,7 @@ A fazenda tem **64 × 49 tiles** (o dobro da área que tinha: era 46 × 34; cres
 
 ## Animais
 - **Cachorro** (já vem com você): passeia sozinho pela fazenda e senta para descansar. Aperte **C** (ou o botão 🐕 no celular) para **chamá-lo**: ele vem correndo e acompanha você por cerca de 50 s, depois volta a passear. Ganha carinho com **E** e todo dia cava um **tesouro** em algum lugar da fazenda (monte de terra com patinha) — cave com **E**.
-- **Curral** (a leste, cercado, com portão a oeste): compre na loja até **4 vacas** (leite diário, ordenhe com **E** quando aparecer o balão), **4 porcos** (carne 2× por dia e trufas) e **2 cavalos**.
+- **Curral** (a leste, cercado, com portões a oeste e a leste; **13 × 14 tiles**, maior desde a Fase 4): compre na loja até **4 vacas** (leite diário, ordenhe com **E** quando aparecer o balão), **4 porcos** (carne 2× por dia e trufas) e **2 cavalos**.
 - **Cavalo:** **E** perto dele para montar, **E** de novo para desmontar. Ele tem **ciclo de caminhada animado** nas 4 direções (4 a 5 quadros por direção) (andando solto ou montado; parado fica em pé com as pernas juntas). Cavalgando você anda quase 2× mais rápido, mas só interage (loja, caixa, poço), sem usar ferramentas.
 - **Ordenhar:** chegue perto da vaca com o balão de balde e use as **Luvas (4) + Espaço** (ou **E**). Uma vez por vaca por dia.
 - **Carne do porco:** 2 vezes por dia (ao amanhecer e a partir das 13:00) cada porco dá 1 carne — quando aparecer o balão de presunto, use **E** ou as **Luvas (4) + Espaço**. Carne vende por 30 ◎.
