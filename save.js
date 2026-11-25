@@ -92,7 +92,7 @@ function createSaveManager(adapter, opts = {}) {
   /* SLOTS (Fase 1c): `cur` é o slot em uso (1–3); `slot`/`bak`/`tmp` de `K` sempre apontam para ele. Todas as funções abaixo (load/save/peek/removeMain/
      copies.restore/external) trabalham no slot em uso, então o código de uma partida não muda com 1 ou 3 slots. `useSlot(n)` troca; `slots()` lista os três. */
   let cur = SAVE_SLOT;
-  const K = { slot: '', bak: '', tmp: '', meta: SAVE_NS + 'meta', cfg: SAVE_NS + 'cfg', copy: SAVE_NS + 'copy:' };
+  const K = { slot: '', bak: '', tmp: '', meta: SAVE_NS + 'meta', cfg: SAVE_NS + 'cfg', copy: SAVE_NS + 'copy:', why: SAVE_NS + 'why:' };
   const pointTo = n => { cur = n; K.slot = SAVE_NS + 'slot:' + n; K.bak = K.slot + ':bak'; K.tmp = K.slot + ':tmp'; };
   pointTo(SAVE_SLOT);
   const validSlot = n => Number.isInteger(n) && n >= 1 && n <= SAVE_SLOTS;
@@ -265,7 +265,7 @@ function createSaveManager(adapter, opts = {}) {
       if (ins && !ins.ok && ins.reason === 'future' && !session.allowFuture) {      // save de versão MAIS NOVA no slot: nunca sobrescrever (só "Novo jogo" explícito)
         return { ok: false, error: namedError('FutureSchema', 'o save é de uma versão mais nova do jogo') };
       }
-      if (ins && !ins.ok) copies.add(curInfo.raw);                              // vai gravar por cima de algo ilegível (json/crc/…): guarda antes
+      if (ins && !ins.ok) copies.add(curInfo.raw, 'invalid');                              // vai gravar por cima de algo ilegível (json/crc/…): guarda antes
       need().prepare(S);
       const rev = session.rev + 1;
       safeWrite(JSON.stringify(wrap(need().persist(S), cur, rev)), ins && ins.ok ? curInfo.raw : null);
@@ -286,10 +286,10 @@ function createSaveManager(adapter, opts = {}) {
     for (const k of keys) {
       if (k !== SAVE_LEGACY.backup && !k.startsWith(SAVE_LEGACY.backup + '_')) continue;
       const raw = readSafe(k); if (raw === null) continue;
-      found++; copies.addAt(k === SAVE_LEGACY.backup ? 0 : +k.slice(SAVE_LEGACY.backup.length + 1) || 0, raw);
+      found++; copies.addAt(k === SAVE_LEGACY.backup ? 0 : +k.slice(SAVE_LEGACY.backup.length + 1) || 0, raw, 'legacy');
     }
     const a = readSafe(SAVE_LEGACY.main), b = readSafe(SAVE_LEGACY.mainOld);
-    if (a !== null && b !== null && a !== b) { found++; copies.addAt(now(), b); }      // N3: o save antigo NÃO é apagado: vira cópia
+    if (a !== null && b !== null && a !== b) { found++; copies.addAt(now(), b, 'replaced'); }      // N3: o save antigo NÃO é apagado: vira cópia
     if (found) { pruneCopies(null); setMeta({ legacyCopies: true }); }
   }
   function loadLegacy(lr) {                           // slot vazio + legado presente (e ainda não importado): migra, sanitiza e grava o slot v2 (o original vira cópia se foi corrigido)
@@ -299,9 +299,9 @@ function createSaveManager(adapter, opts = {}) {
       // Legado que precisou de CORREÇÃO não grava o slot agora: o original vira cópia e o aviso "dados corrigidos" aparece ao jogar; o slot nasce no 1º save.
       if (!r.repaired) { try { adapter.write(K.slot, JSON.stringify(wrap(need().persist(r.state), SAVE_SLOT, r.rev))); persisted = true; setMeta({ legacyMain: true }); legacyMainDone = true; } catch (e) { /* sem espaço: segue só em memória; o 1º save grava */ } }
       r.imported = true; r.persisted = persisted;
-      return r.repaired ? Object.assign(r, { backedUp: copies.add(lr) }) : r;
+      return r.repaired ? Object.assign(r, { backedUp: copies.add(lr, 'repaired') }) : r;
     }
-    return Object.assign(r, { raw: lr, backedUp: copies.add(lr) });
+    return Object.assign(r, { raw: lr, backedUp: copies.add(lr, 'invalid') });
   }
 
   /* Leitura do save. Nunca lança e distingue os casos:
@@ -322,20 +322,20 @@ function createSaveManager(adapter, opts = {}) {
       return { status: 'none' };
     }
     const first = slotRaw !== null ? parse(slotRaw) : null;
-    if (first && first.status === 'ok') return first.repaired ? Object.assign(first, { backedUp: copies.add(slotRaw) }) : first;
-    if (first && first.reason === 'future') return Object.assign(first, { raw: slotRaw, backedUp: copies.add(slotRaw) });     // nunca "recupera" por cima de um save mais novo
+    if (first && first.status === 'ok') return first.repaired ? Object.assign(first, { backedUp: copies.add(slotRaw, 'repaired') }) : first;
+    if (first && first.reason === 'future') return Object.assign(first, { raw: slotRaw, backedUp: copies.add(slotRaw, 'future') });     // nunca "recupera" por cima de um save mais novo
     for (const [name, raw] of [['bak', bakRaw], ['tmp', tmpRaw]]) {                                                              // fallback: slot → bak → tmp
       if (raw === null) continue;
       const r = parse(raw);
       if (r.status !== 'ok') continue;
       const slotRev = slotRaw !== null ? revOfRaw(slotRaw) : null;
       r.rev = slotRev !== null ? slotRev : r.rev;                 // o rev do slot danificado: o 1º save depois não pode parecer "outra aba"
-      r.recovered = name; r.backedUp = slotRaw !== null ? copies.add(slotRaw) : true;
+      r.recovered = name; r.backedUp = slotRaw !== null ? copies.add(slotRaw, 'invalid') : true;
       if (slotRaw === null) r.persisted = false;                    // não há slot: a sessão não pode achar que "outra aba o apagou" no 1º save
       return r;
     }
     const raw = slotRaw !== null ? slotRaw : (bakRaw !== null ? bakRaw : tmpRaw);
-    return Object.assign(first || parse(raw), { raw, backedUp: copies.add(raw) });
+    return Object.assign(first || parse(raw), { raw, backedUp: copies.add(raw, 'invalid') });
   }
   function removeMain() {
     if (fenced()) return false;                                   // aba sem o bloqueio de jogo não apaga nada
@@ -414,7 +414,7 @@ function createSaveManager(adapter, opts = {}) {
       let best, slotRaw, backedUp = true;
       try {
         best = peekBest(); slotRaw = readSafe(K.slot);
-        if (best.raw !== null) { backedUp = copies.add(best.raw); if (!backedUp && !opts.force) return { ok: false, reason: 'nocopy', raw: best.raw }; }
+        if (best.raw !== null) { backedUp = copies.add(best.raw, 'replaced'); if (!backedUp && !opts.force) return { ok: false, reason: 'nocopy', raw: best.raw }; }
         const curIns = slotRaw !== null ? inspect(slotRaw) : null;
         const rev = Math.max(slotRaw !== null ? normRev(revOfRaw(slotRaw)) : 0, normRev(best.rev)) + 1;
         const env = wrap(need().persist(ins.state), n, rev);
@@ -435,7 +435,7 @@ function createSaveManager(adapter, opts = {}) {
     startNew(prev) { session.rev = prev.rev === null ? 0 : prev.rev; session.active = true; session.allowFuture = true; markLast(); },           // jogo novo iniciou: continua a contagem do save substituído
     takeOver() {                                          // "Usar esta aba": guarda o que a outra aba salvou e assume o `rev` dela
       if (fenced()) return;                               // sem o bloqueio de jogo não há o que assumir: quem decide é o Web Locks
-      try { const cur = storedInfo(); if (cur.raw !== null) copies.add(cur.raw); session.rev = cur.rev === null ? 0 : cur.rev; } catch (e) { /* storage indisponível: save() avisa */ }
+      try { const cur = storedInfo(); if (cur.raw !== null) copies.add(cur.raw, 'stale'); session.rev = cur.rev === null ? 0 : cur.rev; } catch (e) { /* storage indisponível: save() avisa */ }
       session.stale = false; session.known = false;       // known=false: se a outra aba APAGOU o save, esta pode recriá-lo (foi escolha do jogador)
     },
     isStale: () => session.stale,
@@ -450,13 +450,20 @@ function createSaveManager(adapter, opts = {}) {
 
   /* ---------- cópias de segurança (texto bruto: envelope v2 OU estado v1 legado) ---------- */
   const copyKey = ts => K.copy + ts;
+  /* MOTIVO da cópia (Fase 2): uma chave irmã `fazenda_las:v2:why:<ts>` (a cópia continua sendo o texto bruto, então a deduplicação e o legado não mudam).
+     invalid = não dava para ler · repaired = o jogo foi corrigido ao abrir · replaced = substituído (Novo jogo / importar / restaurar) · deleted = apagado pelo jogador
+     · stale = outra aba salvou por cima · future = save de versão mais nova · legacy = veio do formato antigo. Motivo desconhecido/ausente = null (nunca quebra). */
+  const WHY = ['invalid', 'repaired', 'replaced', 'deleted', 'stale', 'future', 'legacy'];
+  const whyKey = ts => K.why + ts;
+  const readWhy = ts => { const w = readSafe(whyKey(ts)); return WHY.includes(w) ? w : null; };
   function listCopies() {            // mais recentes primeiro
     const out = [];
     try {
       for (const k of adapter.keys()) {
         if (!k.startsWith(K.copy)) continue;
         const raw = adapter.read(k);
-        out.push({ key: k, ts: +k.slice(K.copy.length) || 0, raw, info: parse(raw) });
+        const ts = +k.slice(K.copy.length) || 0;
+        out.push({ key: k, ts, raw, info: parse(raw), why: readWhy(ts) });
       }
     } catch (e) { /* storage indisponível */ }
     return out.sort((x, y) => y.ts - x.ts);
@@ -469,23 +476,38 @@ function createSaveManager(adapter, opts = {}) {
     // 0 = ilegível (json/crc/shape) · 1 = válida · 2 = futura/versão desconhecida — dentro de cada grupo, a mais antiga primeiro.
     const rank = b => b.info.status === 'ok' ? 1 : (b.info.reason === 'future' || b.info.reason === 'version') ? 2 : 0;
     const victims = all.filter(b => b.key !== keepKey && b !== newestValid).sort((x, y) => rank(x) - rank(y) || x.ts - y.ts);
-    for (let n = all.length; n > SAVE_MAX_COPIES && victims.length; n--) adapter.remove(victims.shift().key);
+    for (let n = all.length; n > SAVE_MAX_COPIES && victims.length; n--) { const v = victims.shift(); adapter.remove(v.key); try { adapter.remove(whyKey(v.ts)); } catch (e) { /* ignora */ } }
+    try { const live = new Set(all.map(b => whyKey(b.ts))); for (const k of adapter.keys()) if (k.startsWith(K.why) && !live.has(k)) adapter.remove(k); } catch (e) { /* motivo órfão é só lixo pequeno */ }
   }
   const copies = {
     list: listCopies,
-    add(j) {                                                                    // guarda uma cópia do texto `j`; true se guardou (ou já existia)
+    add(j, why) {                                                               // guarda uma cópia do texto `j` (com o MOTIVO, opcional); true se guardou (ou já existia)
       if (!j) return true;                                                      // nada a guardar
       let t;
       try {
         if (listCopies().some(b => b.raw === j)) return true;                   // já guardado (o boot e o "Continuar" leem duas vezes)
         t = now(); while (adapter.read(copyKey(t)) !== null) t++;               // duas cópias no mesmo milissegundo não se sobrescrevem
         adapter.write(copyKey(t), j);
-      } catch (e) { return false; }                                             // cota cheia: o texto ainda pode ser baixado da tela inicial
+      } catch (e) { return false; }
+      if (WHY.includes(why)) { try { adapter.write(whyKey(t), why); } catch (e) { /* sem espaço para o motivo: a cópia vale igual */ } }                                             // cota cheia: o texto ainda pode ser baixado da tela inicial
       try { pruneCopies(copyKey(t)); } catch (e) { /* poda é limpeza: a cópia JÁ está guardada */ }
       return true;
     },
-    addAt(ts, raw) { if (!listCopies().some(b => b.raw === raw)) { let t = ts; while (adapter.read(copyKey(t)) !== null) t++; adapter.write(copyKey(t), raw); } },   // importação do legado (interna)
-    restore(b) { try { adapter.write(K.slot, b.raw); return true; } catch (e) { return false; } },     // grava a cópia por cima do principal (texto bruto)
+    addAt(ts, raw, why) { if (!listCopies().some(b => b.raw === raw)) { let t = ts; while (adapter.read(copyKey(t)) !== null) t++; adapter.write(copyKey(t), raw); if (WHY.includes(why)) { try { adapter.write(whyKey(t), why); } catch (e) { /* ignora */ } } } },   // importação do legado (interna)
+    /* Restaura a cópia no slot EM USO. Só cópia LEGÍVEL (o jogo nunca oferece outra) e RE-EMBRULHADA, como a importação: slot = o do destino (a cópia pode ser de
+       outro slot) e `rev` = o do slot + 1 (D6: as outras abas notam a troca). Nunca grava o texto cru. false: recusada (sem o bloqueio de jogo / ilegível / sem espaço). */
+    restore(b) {
+      if (fenced() || !b || !b.info || b.info.status !== 'ok') return false;
+      try {
+        const slotRaw = readSafe(K.slot), curIns = slotRaw !== null ? inspect(slotRaw) : null;
+        const rev = Math.max(slotRaw !== null ? normRev(revOfRaw(slotRaw)) : 0, normRev(peekBest().rev), normRev(b.info.rev)) + 1;
+        const env = wrap(need().persist(b.info.state), cur, rev);
+        if (b.info.savedAt) env.savedAt = b.info.savedAt;
+        safeWrite(JSON.stringify(env), curIns && curIns.ok ? slotRaw : null);
+        if (cur === SAVE_SLOT && !legacyMainDone) legacyMainDone = readMeta().legacyMain === true || setMeta({ legacyMain: true });
+        return true;
+      } catch (e) { console.warn('falha ao restaurar a cópia', e); return false; }
+    },
   };
 
   /* ---------- configuração de áudio (música/efeitos) ---------- */

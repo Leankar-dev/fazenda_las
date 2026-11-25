@@ -262,7 +262,7 @@
       const first = JSON.parse(sessionStorage.getItem('first') || '[]');
       for (const t of first) tests.push(t);
       ok('a 1ª carga registrou suas verificações', first.length === 5, first.length);
-      ok('2º clique restaurou: principal = cópia válida', T.readMain() === validSave(7, 777));
+      ok('2º clique restaurou: principal = a cópia válida (re-embrulhada: slot 1, rev 1, crc íntegro)', T.mainEnv() && T.mainEnv().data.day === 7 && T.mainEnv().data.gold === 777 && T.mainEnv().slot === 1 && T.mainEnv().rev === 1 && T.mainCrcOk(), JSON.stringify(T.mainEnv()));
       ok('Continuar visível e sem aviso', vis('btnContinue') && !vis('saveProblem'));
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
@@ -282,8 +282,30 @@
       }
       ok('1ª carga: restaurar visível (Dia 7)', (sessionStorage.getItem('first') || '').startsWith('true'), sessionStorage.getItem('first'));
       ok('depois de restaurar: Continuar visível e sem aviso', vis('btnContinue') && !vis('saveProblem'));
-      ok('principal = cópia restaurada', T.readMain() === validSave(7, 777));
+      ok('principal = cópia restaurada (re-embrulhada: slot 1, rev 1, crc íntegro, data do jogo preservada)', T.mainEnv() && T.mainEnv().data.day === 7 && T.mainEnv().data.gold === 777 && T.mainEnv().slot === 1 && T.mainEnv().rev === 1 && T.mainCrcOk() && T.mainEnv().savedAt === '2026-01-01T00:00:00.000Z', JSON.stringify(T.mainEnv()));
       ok('o lixo anterior continua guardado numa cópia', T.copies().some(c => c.raw === '{lixo'));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  /* Fase 2: o MOTIVO da cópia aparece no botão "Restaurar", e restaurar uma cópia que veio de OUTRO slot grava no slot selecionado (slot do envelope = o do destino) */
+  S_['restaurar-motivo-slot'] = {
+    seed() {
+      if (sessionStorage.getItem('ran') === 'restaurar-motivo-slot') return;
+      T.reset(); T.seedCopy(5000, JSON.stringify(Object.assign(JSON.parse(validSave(6, 66)), { slot: 3, rev: 4 })));      // cópia de um jogo do slot 3 (o crc é só do `data`)
+      localStorage.setItem('fazenda_las:v2:why:5000', 'deleted'); T.setMain('{lixo');
+    },
+    async run() {
+      await bootReady();
+      if (sessionStorage.getItem('ran') !== 'restaurar-motivo-slot') {
+        sessionStorage.setItem('ran', 'restaurar-motivo-slot');
+        ok('o botão mostra o dia e o MOTIVO (foi apagado)', vis('btnSpRestore') && $('btnSpRestore').textContent.includes('Dia 6') && $('btnSpRestore').textContent.includes('foi apagado'), $('btnSpRestore').textContent);
+        sessionStorage.setItem('first', '1'); $('btnSpRestore').click(); await wait(3000); return;
+      }
+      const e = T.mainEnv();
+      ok('a cópia (slot 3, rev 4) foi gravada no slot 1 como slot 1, rev 5', e && e.slot === 1 && e.rev === 5 && e.data.day === 6 && T.mainCrcOk(), JSON.stringify(e));
+      ok('o slot 3 não foi tocado', T.slotRaw(3) === null);
+      ok('Continuar visível e sem aviso', vis('btnContinue') && !vis('saveProblem'));
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };

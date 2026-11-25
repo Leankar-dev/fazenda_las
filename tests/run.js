@@ -10,7 +10,7 @@ const SCENARIOS = [
   'fixture-pre-carne', 'fixture-atual', 'fixture-minimo', 'fixture-parcial', 'fixture-com-ptpk',          // saves que devem carregar sem NaN
   'fixture-truncado', 'fixture-invalido', 'fixture-futuro', 'fixture-shape', 'fixture-versao',   // saves que devem avisar e ser preservados
   'fixture-v2-ok', 'fixture-v2-truncado', 'fixture-v2-crc', 'fixture-v2-futuro',                  // formato v2 (envelope com crc)
-  'rotacao-copias', 'poda-copias-validas', 'poda-copia-futura', 'poda-copia-versao', 'restaurar', 'restaurar-sem-copia',                                                       // cópias de segurança
+  'rotacao-copias', 'poda-copias-validas', 'poda-copia-futura', 'poda-copia-versao', 'restaurar', 'restaurar-sem-copia', 'restaurar-motivo-slot',                                                       // cópias de segurança
   'cfg-audio',                                                                         // configuração de áudio sobrevive ao recarregar
   'quota-jogo', 'quota-boot', 'storage-bloqueado',                                     // falhas de gravação (cota REAL cheia, modo privado)
   'salva-eventos', 'pt-pk-fora-do-save',                                               // gatilhos de save e conteúdo gravado

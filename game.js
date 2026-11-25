@@ -740,6 +740,7 @@
     future: 'O arquivo é de uma versão mais nova do jogo. Atualize a página (Ctrl+F5) e tente de novo.',
     version: 'O arquivo é de uma versão do jogo que este código não reconhece.',
     shape: 'O arquivo está incompleto (faltam dados do mapa).',
+    lock: 'Outra aba está com o jogo: esta aba não grava.',
   };
   // fazenda-las-AAAA-MM-DD-slotN[-sufixo].json — a data é a LOCAL (toISOString seria UTC: à noite no Brasil já seria "amanhã")
   const saveFileName = (suffix, slot) => {
@@ -760,7 +761,7 @@
       br.textContent = label;
       br.onclick = () => {
         // R5: restaurar grava por cima do principal. Se ele está ilegível e NÃO tem cópia, tenta guardá-la agora; se não couber, só restaura no 2º clique
-        if (bad && found.raw && !forced && !found.backedUp && !SaveManager.copies.add(found.raw)) {
+        if (bad && found.raw && !forced && !found.backedUp && !SaveManager.copies.add(found.raw, 'invalid')) {
           forced = true; br.textContent = 'Restaurar mesmo assim (o save atual será perdido)';
           $('spMsg').textContent = 'Não foi possível guardar uma cópia do save atual (ilegível) antes de restaurar. Baixe-o com "Baixar cópia" ou restaure mesmo assim — o save atual será perdido.';
           return;
@@ -795,7 +796,8 @@
       box.appendChild(b);
     }
   }
-  const backupLabel = b => { const st = b.info.state, d = b.ts ? new Date(b.ts).toLocaleDateString('pt-BR') : 'data desconhecida'; return 'Dia ' + st.day + ' · ' + fmt(st.gold) + ' ◎ · ' + d; };
+  const WHY_TEXT = { invalid: 'estava ilegível', repaired: 'foi corrigido ao abrir', replaced: 'foi substituído', deleted: 'foi apagado', stale: 'outra aba salvou por cima', future: 'é de uma versão mais nova', legacy: 'formato antigo' };
+  const backupLabel = b => { const st = b.info.state, d = b.ts ? new Date(b.ts).toLocaleDateString('pt-BR') : 'data desconhecida'; return 'Dia ' + st.day + ' · ' + fmt(st.gold) + ' ◎ · ' + d + (WHY_TEXT[b.why] ? ' · ' + WHY_TEXT[b.why] : ''); };
 
   /* ---------------- jogador ---------------- */
   const P = { x: SPAWN.x, y: SPAWN.y, dir: 0, moving: false, walkT: 0, stepT: 0, wk: 0, idleT: 0, lastStep: 0 };
@@ -1421,7 +1423,7 @@
     else if (a === 'reset' || a === 'resetforce') {       // R1: guarda cópia do jogo atual ANTES de apagar
       if (a === 'reset') save();                           // inclui o que foi feito desde o último autosave (se esta aba ainda pode salvar)
       const raw = SaveManager.peekBest().raw;
-      if (a === 'reset' && raw !== null && !SaveManager.copies.add(raw)) {
+      if (a === 'reset' && raw !== null && !SaveManager.copies.add(raw, 'replaced')) {
         pendingResetRaw = raw; currentModal = 'reset';
         setModal(`<h2>Novo jogo</h2><p>Não foi possível guardar uma cópia do jogo atual (sem espaço no navegador). Baixe o save antes ou apague mesmo assim.</p>
           <div class="modalBtns"><button class="mb alt" data-a="resetdl">Baixar cópia (.json)</button><button class="mb red" data-a="resetforce">Apagar mesmo assim</button><button class="mb" data-a="close">Cancelar</button></div>`);
@@ -2272,7 +2274,7 @@
     if (S.rain) toast('🌧️ Hoje está chovendo — as plantas já estão regadas.');
     if (loadIt) { SaveManager.session.adopt(loaded); if (loaded.recovered) toast('⚠ O save principal estava danificado — recuperamos a versão anterior. Uma cópia do danificado ficou guardada.', 'bad'); if (loaded.repaired) toast('⚠ O save tinha dados inválidos que foram corrigidos. Uma cópia do original ficou guardada.', 'bad'); }
     else {      // R1: jogo novo iniciou — agora sim substitui o save anterior, depois de guardar uma cópia dele
-      if (prev.raw !== null && !SaveManager.copies.add(prev.raw) && !eraseForced) toast('⚠ Não foi possível guardar cópia do jogo anterior (sem espaço no navegador).', 'bad');
+      if (prev.raw !== null && !SaveManager.copies.add(prev.raw, 'replaced') && !eraseForced) toast('⚠ Não foi possível guardar cópia do jogo anterior (sem espaço no navegador).', 'bad');
       SaveManager.session.startNew(prev); save();
     }
     if (loadIt) openMenu();      // Continuar: o jogo começa PAUSADO (menu aberto): nenhum tempo de jogo se perde e o clique serve de gesto para o áudio
@@ -2394,7 +2396,7 @@
             if (loadIt) {      // R3: o save passou na leitura mas o jogo não conseguiu iniciá-lo: guarda cópia e oferece baixar (recarregar não resolve)
               const raw = SaveManager.peekBest().raw;
               fail('Não foi possível iniciar o jogo salvo.');
-              renderSaveProblem({ status: 'invalid', reason: 'start', raw, backedUp: raw !== null && SaveManager.copies.add(raw), detail: e.message }, null);
+              renderSaveProblem({ status: 'invalid', reason: 'start', raw, backedUp: raw !== null && SaveManager.copies.add(raw, 'invalid'), detail: e.message }, null);
             } else fail('Não foi possível iniciar o jogo (' + e.message + '). Recarregue a página.');
           }
           $('busy').classList.add('hidden');
@@ -2422,7 +2424,7 @@
       };
       $('btnYes').onclick = () => {
         const raw = SaveManager.peekBest().raw;
-        if (raw !== null && !eraseForced && !SaveManager.copies.add(raw)) {       // R1: não coube a cópia — oferece baixar antes de apagar
+        if (raw !== null && !eraseForced && !SaveManager.copies.add(raw, 'replaced')) {       // R1: não coube a cópia — oferece baixar antes de apagar
           eraseForced = true;
           $('confirmMsg').textContent = 'Não foi possível guardar uma cópia do jogo atual (sem espaço no navegador). Baixe o save antes ou apague mesmo assim.';
           $('btnYes').textContent = 'Apagar mesmo assim'; $('btnNewDl').classList.remove('hidden'); $('btnNewDl').onclick = () => downloadText(saveFileName('copia'), raw);
@@ -2439,7 +2441,7 @@
       };
       $('btnDelYes').onclick = () => {
         const raw = SaveManager.peekBest().raw;
-        if (raw !== null && !delForced && !SaveManager.copies.add(raw)) {
+        if (raw !== null && !delForced && !SaveManager.copies.add(raw, 'deleted')) {
           delForced = true; $('delMsg').textContent = 'Não foi possível guardar uma cópia do Jogo ' + sel + ' (sem espaço no navegador). Baixe o save antes ou apague mesmo assim.';
           $('btnDelYes').textContent = 'Apagar mesmo assim'; $('btnDelDl').classList.remove('hidden'); $('btnDelDl').onclick = () => downloadText(saveFileName('copia'), raw);
           return;

@@ -257,10 +257,48 @@ test('N1: save de versão futura/desconhecida só é podado depois das ilegívei
   M.copies.add('{novo'); const ks = copiesOf(a); assert.strictEqual(ks.length, 3);
   assert.ok(ks.some(c => c.raw === fut), 'a futura sobreviveu'); assert.ok(!ks.some(c => c.ts === 2000), 'a válida mais antiga saiu');
 });
-test('restore grava o texto bruto da cópia no slot; falha devolve false', () => {
-  const a = mem(), M = mgr(a), raw = envText(M, goodState(7, 777), 3); M.copies.add(raw);
-  assert.ok(M.copies.restore(M.copies.list()[0])); assert.strictEqual(a.read(K(M).slot), raw);
-  a.failOn = () => { throw new Error('bloqueado'); }; assert.strictEqual(M.copies.restore({ raw: 'x' }), false);
+test('restore RE-EMBRULHA a cópia no slot em uso (slot e rev do destino, savedAt do jogo); o slot legível anterior vai para o bak; falha devolve false', () => {
+  const a = mem(), M = mgr(a), raw = JSON.stringify(Object.assign(M.format.wrap(goodState(7, 777), 3, 3), { savedAt: '2026-01-02T03:04:05.000Z' })); M.copies.add(raw);
+  M.useSlot(1); assert.ok(M.save(goodState(9, 9)).ok); assert.ok(M.save(goodState(9, 10)).ok);                    // o slot 1 já tem rev 2
+  const antes = a.read(K(M).slot), b = M.copies.list()[0];
+  assert.ok(M.copies.restore(b)); const env = JSON.parse(a.read(K(M).slot));
+  assert.strictEqual(env.slot, 1, 'slot do DESTINO (a cópia era do slot 3)'); assert.strictEqual(env.rev, 4, 'rev = max(slot 2, cópia 3) + 1'); assert.strictEqual(env.data.day, 7);
+  assert.strictEqual(env.savedAt, '2026-01-02T03:04:05.000Z'); assert.strictEqual(M.format.inspect(a.read(K(M).slot)).ok, true, 'crc íntegro'); assert.strictEqual(a.read(K(M).bak), antes, 'o jogo que estava no slot ficou no bak');
+  a.failOn = () => { throw new Error('bloqueado'); }; assert.strictEqual(M.copies.restore(b), false);
+});
+test('restore recusa cópia ilegível/futura (nunca grava texto cru) e cópia v1 vira envelope v2', () => {
+  const a = mem(), M = mgr(a); M.copies.add('{truncado'); M.copies.add(JSON.stringify({ v: 99, day: 5 })); M.copies.add(JSON.stringify(Object.assign({ v: 1, rev: 6 }, goodState(4, 44))));
+  const L = M.copies.list(); assert.strictEqual(L.length, 3);
+  for (const b of L.filter(b => b.info.status !== 'ok')) { assert.strictEqual(M.copies.restore(b), false); assert.strictEqual(a.read(K(M).slot), null, 'nada gravado'); }
+  assert.ok(M.copies.restore(L.find(b => b.info.status === 'ok'))); const env = JSON.parse(a.read(K(M).slot));
+  assert.strictEqual(env.magic, 'fazenda_las-save'); assert.strictEqual(env.schema, 2); assert.strictEqual(env.rev, 7); assert.strictEqual(env.data.v, undefined);
+  assert.strictEqual(M.load().status, 'ok');
+});
+test('restore respeita a cerca de escrita (sem o bloqueio de jogo não grava nada)', () => {
+  const a = mem(), M = mgr(a); M.copies.add(envText(M, goodState(7, 777), 3)); let can = false; M.fence(() => can); const n = a.log.length;
+  assert.strictEqual(M.copies.restore(M.copies.list()[0]), false); assert.strictEqual(a.log.length, n, 'o storage nem foi tocado'); can = true; assert.ok(M.copies.restore(M.copies.list()[0]));
+});
+test('motivo da cópia: cada caminho registra o seu; motivo desconhecido não é gravado; a poda leva o motivo junto', () => {
+  const a = mem(), M = mgr(a), why = () => Object.fromEntries(M.copies.list().map(b => [b.raw, b.why]));
+  assert.ok(M.copies.add('{a', 'deleted')); assert.ok(M.copies.add('{b', 'inventado')); assert.ok(M.copies.add('{c'));
+  assert.deepStrictEqual(why(), { '{a': 'deleted', '{b': null, '{c': null }); assert.strictEqual(a.keys().filter(k => k.startsWith(K(M).why)).length, 1, 'só o motivo válido ocupa chave');
+  a.m.set(K(M).why + '1', 'replaced');                                                   // motivo órfão (cópia que já não existe)
+  M.copies.add('{d', 'stale'); assert.ok(!a.keys().includes(K(M).why + '1'), 'órfão limpo pela poda');
+  M.copies.add('{e', 'replaced'); M.copies.add('{f', 'invalid'); const live = M.copies.list(); assert.strictEqual(live.length, 3);
+  assert.deepStrictEqual(a.keys().filter(k => k.startsWith(K(M).why)).sort(), live.filter(b => b.why).map(b => K(M).why + b.ts).sort(), 'um motivo por cópia viva, nenhum sobrando');
+  a.m.set(K(M).why + live[0].ts, '<script>'); assert.strictEqual(M.copies.list()[0].why, null, 'texto fora da lista fechada vira null');
+});
+test('motivo da cópia: invalid (gravar por cima de ilegível), repaired (corrigido ao abrir), replaced (importar), stale (usar esta aba), future, legacy', () => {
+  let a = mem(), M = mgr(a); a.m.set(K(M).slot, '{ilegivel'); M.session.reset(); M.session.adopt({ status: 'none' });
+  assert.ok(M.save(goodState()).ok); assert.strictEqual(M.copies.list()[0].why, 'invalid');
+  a = mem(); M = mgr(a); a.m.set(K(M).slot, envText(M, goodState(3, 3, { lixo: 1 }), 2)); const r = M.load(); assert.strictEqual(r.status, 'ok'); assert.ok(r.repaired);
+  assert.strictEqual(M.copies.list()[0].why, 'repaired');
+  a = mem(); M = mgr(a); M.save(goodState(1, 1)); assert.ok(M.importInto(1, envText(M, goodState(8, 8), 1)).ok); assert.strictEqual(M.copies.list()[0].why, 'replaced');
+  a = mem(); M = mgr(a); M.session.reset(); M.session.adopt({ status: 'none' }); M.save(goodState(1, 1)); const M2 = mgr(a); M2.session.reset(); M2.session.adopt({ status: 'none' }); M2.save(goodState(2, 2));
+  M.session.takeOver(); assert.strictEqual(M.copies.list()[0].why, 'stale');
+  a = mem(); M = mgr(a); a.m.set(K(M).slot, JSON.stringify({ magic: 'fazenda_las-save', schema: 99, rev: 1, data: {}, crc: 'x' })); M.load(); assert.strictEqual(M.copies.list()[0].why, 'future');
+  a = mem(); a.m.set('fazenda_leankar_v1', FX('save_v1_atual')); a.m.set('fazenda_leankar_v1_backup_1700000000000', FX('save_v1_minimo')); M = mgr(a); M.load();
+  assert.ok(M.copies.list().length >= 1 && M.copies.list().every(b => b.why === 'legacy'), JSON.stringify(M.copies.list().map(b => b.why)));
 });
 
 /* ============================ legado (fazenda_leankar_* / fazenda_elias_*) ============================ */
