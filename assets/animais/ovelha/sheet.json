@@ -1,0 +1,144 @@
+{
+ "source": "docs/ovelhas_coelhos.jpeg",
+ "image": "sheet.png",
+ "cell": [
+  116,
+  120
+ ],
+ "columns": 6,
+ "rows": [
+  "right",
+  "left",
+  "down",
+  "up",
+  "eat_right",
+  "eat_left",
+  "shorn_right",
+  "shorn_left",
+  "shorn_down",
+  "shorn_up"
+ ],
+ "frames": {
+  "right": 6,
+  "left": 6,
+  "down": 6,
+  "up": 6,
+  "eat_right": 4,
+  "eat_left": 4,
+  "shorn_right": 6,
+  "shorn_left": 6,
+  "shorn_down": 6,
+  "shorn_up": 6
+ },
+ "idle": {
+  "right": 0,
+  "left": 0,
+  "down": 0,
+  "up": 0,
+  "eat_right": 0,
+  "eat_left": 0,
+  "shorn_right": 0,
+  "shorn_left": 0,
+  "shorn_down": 0,
+  "shorn_up": 0
+ },
+ "anchor": "centro de massa na coluna central da célula; pés na base (padBottom px acima da borda inferior)",
+ "padBottom": 2,
+ "bodyHeight": 91,
+ "footprintWidth": {
+  "right": 89,
+  "left": 89,
+  "down": 98,
+  "up": 84,
+  "eat_right": 97,
+  "eat_left": 97,
+  "shorn_right": 98,
+  "shorn_left": 98,
+  "shorn_down": 90,
+  "shorn_up": 77
+ },
+ "facing": "as linhas *_left olham para a esquerda; as *_right são o espelho",
+ "loop": {
+  "right": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "left": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "down": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "up": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "shorn_right": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "shorn_left": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "shorn_down": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "shorn_up": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "eat_right": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "eat_left": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "fps": {
+  "walk": 6,
+  "eat": 4
+ },
+ "notes": "idle = quadro 0 (pose original, sem deformação). tosquiada: linhas shorn_*. pastar: eat_* (a cabeça abaixa e sobe)."
+}

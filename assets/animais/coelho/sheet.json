@@ -1,0 +1,125 @@
+{
+ "source": "docs/ovelhas_coelhos.jpeg",
+ "image": "sheet.png",
+ "cell": [
+  120,
+  124
+ ],
+ "columns": 6,
+ "rows": [
+  "right",
+  "left",
+  "down",
+  "up",
+  "eat_right",
+  "eat_left",
+  "alert_right",
+  "alert_left"
+ ],
+ "frames": {
+  "right": 6,
+  "left": 6,
+  "down": 6,
+  "up": 6,
+  "eat_right": 4,
+  "eat_left": 4,
+  "alert_right": 4,
+  "alert_left": 4
+ },
+ "idle": {
+  "right": 0,
+  "left": 0,
+  "down": 0,
+  "up": 0,
+  "eat_right": 0,
+  "eat_left": 0,
+  "alert_right": 0,
+  "alert_left": 0
+ },
+ "anchor": "centro de massa na coluna central da célula; pés na base (padBottom px acima da borda inferior)",
+ "padBottom": 2,
+ "bodyHeight": 95,
+ "footprintWidth": {
+  "right": 79,
+  "left": 79,
+  "down": 66,
+  "up": 53,
+  "eat_right": 100,
+  "eat_left": 100,
+  "alert_right": 79,
+  "alert_left": 79
+ },
+ "facing": "as linhas *_left olham para a esquerda; as *_right são o espelho",
+ "loop": {
+  "right": [
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "left": [
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "down": [
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "up": [
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "eat_right": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "eat_left": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "alert_right": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "alert_left": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "hopFrames": {
+  "crouch": 1,
+  "launch": 2,
+  "apex": 3,
+  "fall": 4,
+  "land": 5
+ },
+ "hopLift": {
+  "launch": 7,
+  "apex": 17,
+  "fall": 8
+ },
+ "fps": {
+  "hop": 10,
+  "eat": 6,
+  "alert": 3
+ },
+ "notes": "idle = quadro 0 (sentado, pose original). O pulo é um ciclo de 5 quadros (agachar, sair, topo, descer, aterrissar); a altura do pulo está EMBUTIDA no quadro (a sombra fica no chão)."
+}
