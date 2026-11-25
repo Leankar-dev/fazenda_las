@@ -1,0 +1,64 @@
+{
+  "image": "walk_sheet.png",
+  "cell": [
+    112,
+    172
+  ],
+  "columns": 5,
+  "rows": [
+    "right",
+    "left",
+    "down",
+    "up"
+  ],
+  "size": [
+    560,
+    688
+  ],
+  "bodyHeight": 162,
+  "padBottom": 2,
+  "loop": {
+    "right": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "left": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "down": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "up": [
+      0,
+      1,
+      2,
+      4
+    ]
+  },
+  "idleFrame": {
+    "right": 1,
+    "left": 3,
+    "down": 0,
+    "up": 0
+  },
+  "footprintWidth": {
+    "right": 78,
+    "left": 82,
+    "down": 68,
+    "up": 68
+  },
+  "front": "front.png",
+  "frontSize": [
+    134,
+    324
+  ],
+  "note": "ciclo de caminhada; a linha \"up\" não usa o quadro 3 (fazendeiro sem chapéu na fonte). Direções do jogo: 0 baixo(front) · 1 cima(back) · 2 esquerda · 3 direita"
+}

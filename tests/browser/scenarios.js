@@ -288,6 +288,50 @@
     },
   };
 
+  /* Fazendeiro com sprite sheet (walk_sheet.png: 5 quadros x 4 direções): a sheet carrega e é fatiada em 20 quadros com pés na base; o ciclo percorre o `loop` (sem o quadro repetido
+     nem o sem chapéu); parado usa o quadro de repouso; a fazendeira continua no desenho antigo; as ferramentas e o retrato carregam; montado desenha nas 4 direções */
+  S_['fazendeiro-sprites'] = {
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); $('btnNew').click(); await wait(200); document.querySelectorAll('.charCard')[0].click(); const G = await gameReady(), I = G.IMGS, W = G.WALKER, DIRS = ['down', 'up', 'left', 'right'];
+      ok('é o fazendeiro, com a sheet fatiada em 20 quadros (4 direções x 5)', G.CHAR.id === 'fazendeiro' && !!I.walk && DIRS.every(d => I.walk[d] && I.walk[d].length === 5));
+      const info = f => {      // pixels visíveis: contagem, base (pés), centro de massa do TRONCO (60% de cima), borda tocada e hash
+        const w = f.width, h = f.height, d = f.getContext('2d').getImageData(0, 0, w, h).data; let n = 0, y1 = -1, tn = 0, tx = 0, edge = 0, hash = 0, y0 = h;
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; if (d[i + 3] > 40) { n++; y1 = Math.max(y1, y); y0 = Math.min(y0, y); if (x < 2 || x >= w - 2) edge++; hash = (hash * 31 + d[i] + d[i + 1] * 7 + d[i + 2] * 13) | 0; } }
+        for (let y = y0; y < y0 + (y1 - y0) * .6; y++) for (let x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 40) { tn++; tx += x; }
+        return { n, y1, h: y1 - y0 + 1, cx: tx / tn, edge, hash };
+      };
+      const all = DIRS.flatMap(d => I.walk[d].map((f, i) => Object.assign(info(f), { d, i })));
+      ok('todos os quadros têm o personagem (pixels visíveis)', all.every(q => q.n > 3000), JSON.stringify(all.filter(q => q.n <= 3000)));
+      ok('os pés ficam na base da célula (alinhados ao chão)', all.every(q => q.y1 >= 167 && q.y1 <= 170), JSON.stringify(all.map(q => q.y1)));
+      ok('o tronco fica no centro da célula (±5 px) e nada encosta nas bordas: a fatia está na grade certa', all.every(q => Math.abs(q.cx - 56) < 5 && q.edge === 0), JSON.stringify(all.map(q => Math.round(q.cx) + '/' + q.edge)));
+      ok('a altura é a MESMA nas 4 direções (±3 px): não encolhe ao virar', Math.max(...all.map(q => q.h)) - Math.min(...all.map(q => q.h)) <= 4 && all.every(q => Math.abs(q.h - W.ref) <= 3), JSON.stringify(all.map(q => q.h)));
+      ok('as 4 direções são DIFERENTES entre si', new Set(all.filter(q => q.i === 0).map(q => q.hash)).size === 4);
+      ok('os quadros do laço de cada direção são todos DIFERENTES (nenhum repetido)', DIRS.every(d => new Set(W.loop[d].map(i => all.find(q => q.d === d && q.i === i).hash)).size === W.loop[d].length));
+      ok('o laço não usa o 5º quadro repetido (lados e frente) nem o de costas sem chapéu', W.loop.right.length === 4 && W.loop.left.length === 4 && W.loop.down.length === 4 && !W.loop.up.includes(3), JSON.stringify(W.loop));
+      // desenho: espia as imagens desenhadas (os quadros são canvas 112x172)
+      const proto = CanvasRenderingContext2D.prototype, draw0 = proto.drawImage, seen = []; proto.drawImage = function (img, ...a) { if (img && img.width === 112 && img.height === 172) seen.push(img); return draw0.call(this, img, ...a); };
+      const frameDrawn = (dir, wk, walkT) => { seen.length = 0; G.P.dir = dir; G.P.wk = wk; G.P.walkT = walkT; G.P.moving = wk > 0; G.step(.0001); return seen[seen.length - 1]; };
+      G.S.min = 12 * 60; G.P.x = 8.5 * 64; G.P.y = 8.5 * 64;
+      const cyc = [], T8 = 2 * Math.PI / 8; for (let k = 0; k < 8; k++) { const f = frameDrawn(3, 1, (k + .5) / 8 * T8); cyc.push(f); }
+      ok('andando para a direita o ciclo percorre exatamente os 4 quadros do laço, na ordem', cyc.every(Boolean) && new Set(cyc).size === 4 && [0, 1, 2, 3].every(i => cyc.includes(I.walk.right[W.loop.right[i]])) && cyc[0] === I.walk.right[0] && cyc[2] === I.walk.right[1] && cyc[4] === I.walk.right[2] && cyc[6] === I.walk.right[3], cyc.map(f => I.walk.right.indexOf(f)).join(','));
+      ok('andando para cima usa o laço de costas (0,1,2,4)', (() => { const u = []; for (let k = 0; k < 8; k++) u.push(I.walk.up.indexOf(frameDrawn(1, 1, (k + .5) / 8 * T8))); return JSON.stringify([...new Set(u)]) === JSON.stringify([0, 1, 2, 4]); })());
+      for (const d of [0, 1, 2, 3]) ok('parado olhando ' + DIRS[d] + ' usa o quadro de repouso', frameDrawn(d, 0, 1.3) === I.walk[DIRS[d]][W.idle[DIRS[d]]]);
+      proto.drawImage = draw0;
+      ok('o retrato de frente (front.png) e as imagens do cavaleiro existem', I.front_walk && I.front_walk.height > 250 && I.back && I.left_stand && I.back.height > 100);
+      ok('as ferramentas carregaram (cesto, luvas, picareta, forcado, saco de sementes)', ['basket', 'glove1', 'glove2', 'pickaxe', 'pitchfork', 'seedbag_empty'].every(k => I[k] && I[k].width > 5));
+      ok('os sprites antigos do corpo do fazendeiro não são mais carregados (front_stand)', !I.front_stand);
+      const A = G.Animals; G.S.owned.cavalo = 1; const h = A.add('cavalo'); G.P.x = h.x + 70; G.P.y = h.y; A.mount(h);
+      for (const d of [0, 1, 2, 3]) { G.P.dir = d; steps(G, 6); } A.dismount();
+      ok('montado, nas 4 direções: desenha sem erro', !window.__errs.length, window.__errs.join('|'));
+      G.setCharacter('fazendeira'); const J = G.IMGS;
+      ok('a fazendeira segue no desenho antigo (sem sheet, com os 4 corpos)', G.CHAR.id === 'fazendeira' && !J.walk && ['back', 'front_stand', 'front_walk', 'left_stand'].every(k => J[k] && J[k].width > 5));
+      for (const d of [0, 1, 2, 3]) { G.P.dir = d; G.P.wk = 1; G.P.walkT = .7; steps(G, 4); }
+      G.setCharacter('fazendeiro');
+      ok('voltar ao fazendeiro restaura a sheet; desenhar os dois sem erro', !!G.IMGS.walk && !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
   /* Casa principal (assets/casa.png no lugar do celeiro procedural): é desenhada no lugar certo e no tamanho certo; continua sólida; a porta (linha 4, colunas 7-9) dorme só depois
      das 18:00; à noite as janelas acendem (8 luzes) e de dia não */
   S_['casa-principal'] = {
@@ -345,7 +389,15 @@
       G.P.x = h.x + 70; G.P.y = h.y; ok('montar funciona', A.mount(h) && A.isRiding());
       for (const d of [0, 1, 2, 3]) { G.P.dir = d; steps(G, 8); }
       ok('montado, nas 4 direções: desenha sem erro', !window.__errs.length, window.__errs.join('|'));
-      A.dismount(); ok('desmontar funciona', !A.isRiding());
+      // o ciclo desenhado (cavalo solto, andando para a direita, ao lado do jogador): percorre exatamente o `loop` (o 5º quadro repetido de lado fica de fora); parado usa o repouso
+      A.dismount(); h.x = 36 * 64; h.y = 22 * 64; G.P.x = h.x - 90; G.P.y = h.y; steps(G, 40);      // dentro do curral (fora dele o cavalo solto não anda)      // a câmera acompanha o jogador: dá quadros para o cavalo entrar na tela
+      const pr = CanvasRenderingContext2D.prototype, dr0 = pr.drawImage, got = []; pr.drawImage = function (img, ...a) { if (img && img.width === 184 && img.height === 160) got.push(img); return dr0.call(this, img, ...a); };
+      const horseFrame = (wp, moving) => { got.length = 0; for (const o of A.list) if (o.kind === 'cavalo' && o !== h) { o.dir = 0; o.moving = false; o.wait = 99; } h.dir = 3; h.moving = moving; h.tx = 42 * 64; h.ty = 22 * 64; h.wait = 99; h.wp = wp; G.step(.05); const idx = Math.max(...got.map(c => im.walk.right.indexOf(c))); if (idx < 0) horseFrame.dbg = JSON.stringify({ drawn: got.length, dir: h.dir, moving: h.moving, x: Math.round(h.x), y: Math.round(h.y), px: Math.round(G.P.x), cam: [Math.round(G.cam.x), Math.round(G.cam.y)] }); return idx; };
+      const seq = []; for (let k = 0; k < 8; k++) seq.push(horseFrame(k + .1, true));
+      ok('andando para a direita: percorre os 4 quadros do laço, na ordem e repetindo (0,1,2,3,0,1,2,3)', seq.join(',') === '0,1,2,3,0,1,2,3', seq.join(',') + ' ' + (horseFrame.dbg || ''));
+      ok('parado: usa o quadro de repouso da direção (pernas juntas)', horseFrame(0, false) === 2, horseFrame(0, false));
+      pr.drawImage = dr0;
+      ok('desmontar funciona', !A.isRiding());
       G.openShop(); await wait(400); const ic = [...document.querySelectorAll('.item img')].find(i => /cavalo\/icon\.png/.test(i.src));
       ok('a loja mostra o ícone do cavalo (busto 96x96)', !!ic && ic.complete && ic.naturalWidth === 96 && ic.naturalHeight === 96, ic && ic.naturalWidth);
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
@@ -914,7 +966,7 @@
     async run() {
       await bootReady(); await wait(300);
       ok('o cartão 1 existe e mostra o save', cardText(1).includes('Dia'), cardText(1));
-      ok('nenhum <img> do arquivo virou elemento (só o retrato do personagem)', [...card(1).querySelectorAll('img')].every(i => /front_walk\.png$/.test(i.getAttribute('src'))), card(1).innerHTML);
+      ok('nenhum <img> do arquivo virou elemento (só o retrato do personagem)', [...card(1).querySelectorAll('img')].every(i => /\/front(_walk)?\.png$/.test(i.getAttribute('src'))), card(1).innerHTML);
       ok('nenhum <b>/<i> do arquivo virou elemento', !card(1).querySelector('i') && card(1).querySelectorAll('b').length === 1, card(1).innerHTML);
       ok('o script do nome NÃO rodou', window.__xss === undefined, window.__xss);
       ok('o texto do cartão não tem "<"', !cardText(1).includes('<'), cardText(1));

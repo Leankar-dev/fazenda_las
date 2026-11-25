@@ -20,8 +20,8 @@
 
   /* ---------------- personagens ---------------- */
   const CHARACTERS = {
-    fazendeiro: { id: 'fazendeiro', name: 'Elias', role: 'O Fazendeiro', desc: 'Colete de couro, camisa xadrez azul e muita vontade de plantar.', folder: 'assets/fazendeiro' },
-    fazendeira: { id: 'fazendeira', name: 'Karen', role: 'A Fazendeira', desc: 'Camisa xadrez vermelha, cinto de ferramentas e mão boa para a terra.', folder: 'assets/fazendeira' },
+    fazendeiro: { id: 'fazendeiro', name: 'Elias', role: 'O Fazendeiro', desc: 'Colete de couro, camisa xadrez azul e muita vontade de plantar.', folder: 'assets/fazendeiro', front: 'front.png', walker: true },
+    fazendeira: { id: 'fazendeira', name: 'Karen', role: 'A Fazendeira', desc: 'Camisa xadrez vermelha, cinto de ferramentas e mão boa para a terra.', folder: 'assets/fazendeira', front: 'front_walk.png' },
   };
   const CHAR_IDS = Object.keys(CHARACTERS);
   for (const id of CHAR_IDS) CHARACTERS[id].defName = CHARACTERS[id].name;     // nome padrão (o jogador pode trocar)
@@ -31,9 +31,40 @@
   function applyNames(names) { for (const id of CHAR_IDS) CHARACTERS[id].name = cleanName(names && names[id], CHARACTERS[id].defName); }
   let CHAR = CHARACTERS.fazendeiro;
   const charSrc = n => CHAR.folder + '/' + n + '.png';
-  const SPRITE_LIST = ['back', 'back34r', 'basket', 'belt', 'bottomup', 'front_stand', 'front_walk', 'glove1', 'glove2', 'left34', 'left_stand', 'pickaxe', 'pitchfork', 'seedbag_empty', 'seedbag_stack', 'topdown'];
+  /* Sprites do personagem. FERRAMENTAS e cesto: arquivos soltos, iguais para os dois. CORPO: a fazendeira usa 4 sprites estáticos animados por código (pernas giradas);
+     o FAZENDEIRO (`walker: true`) usa uma sprite sheet de caminhada (assets/fazendeiro/walk_sheet.png, gerada por tools/make-fazendeiro-sprites.py: 4 direções x 5 quadros).
+     Constantes de WALKER = walk_sheet.json (tests/build.test.js confere). Quadros em canvas fatiados uma vez ao carregar; `front.png` é o retrato (título, escolha, HUD). */
+  const TOOL_SPRITES = ['basket', 'glove1', 'glove2', 'pickaxe', 'pitchfork', 'seedbag_empty'];
+  const BODY_SPRITES = ['back', 'front_stand', 'front_walk', 'left_stand'];
+  const SPRITE_KEYS = [...TOOL_SPRITES, ...BODY_SPRITES, 'walk'];
+  const WALKER = {
+    cell: [112, 172], cols: 5, ref: 162,                                       // ref = altura do personagem (chapéu aos pés) em px da sheet: na tela vira 104
+    rows: { right: 0, left: 1, down: 2, up: 3 },
+    loop: { right: [0, 1, 2, 3], left: [0, 1, 2, 3], down: [0, 1, 2, 3], up: [0, 1, 2, 4] },   // quadros do ciclo (o 5º repete o 1º; costas sem o 4º: sem chapéu na fonte)
+    idle: { right: 1, left: 3, down: 0, up: 0 },                               // quadro de repouso (pernas mais juntas)
+  };
+  const DIR_NAMES = ['down', 'up', 'left', 'right'];                           // P.dir: 0 baixo · 1 cima · 2 esquerda · 3 direita
   const TILE_LIST = ['casa', 'tile_bare', 'tile_muddy', 'tile_loose', 'tile_grassA', 'tile_grassB', 'tile_grassC', 'tile_grassD', 'tile_wood'];
   const CHAR_IMGS = {};
+  // recorta a sheet em canvas (quadros) e deriva as imagens que o cavaleiro usa (`back`, `left_stand` = recortes justos do repouso; `left_stand` olha para a DIREITA, como no sprite antigo). Sheet que não carregou = quadros vazios.
+  function sliceWalker(ci) {
+    const sh = ci.sheet, [cw, ch] = WALKER.cell, ok = !!sh && sh.width >= cw * WALKER.cols && sh.height >= ch * DIR_NAMES.length, walk = {};
+    for (const d of DIR_NAMES) {
+      walk[d] = [];
+      for (let f = 0; f < WALKER.cols; f++) {
+        const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+        if (ok) c.getContext('2d').drawImage(sh, f * cw, WALKER.rows[d] * ch, cw, ch, 0, 0, cw, ch);
+        walk[d].push(c);
+      }
+    }
+    const tight = c => {        // recorte justo do conteúdo (o desenho do cavaleiro escala pela altura do sprite)
+      const x = c.getContext('2d'), d = x.getImageData(0, 0, c.width, c.height).data; let x0 = c.width, x1 = -1, y0 = c.height, y1 = -1;
+      for (let y = 0; y < c.height; y++) for (let xx = 0; xx < c.width; xx++) if (d[(y * c.width + xx) * 4 + 3] > 20) { if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 < 0) return c;
+      const o = document.createElement('canvas'); o.width = x1 - x0 + 1; o.height = y1 - y0 + 1; o.getContext('2d').drawImage(c, x0, y0, o.width, o.height, 0, 0, o.width, o.height); return o;
+    };
+    ci.walk = walk; ci.back = tight(walk.up[WALKER.idle.up]); ci.left_stand = tight(walk.right[WALKER.idle.right]);
+  }
 
   /* ---------------- dados ---------------- */
   const CROPS = {
@@ -791,7 +822,7 @@
       add('b', '', 'Jogo ' + c.slot);
       if (c.status === 'ok') {
         const sm = c.summary, ch = CHARACTERS[sm.char];
-        if (ch) { const im = document.createElement('img'); im.alt = ''; im.src = ch.folder + '/front_walk.png'; b.appendChild(im); }
+        if (ch) { const im = document.createElement('img'); im.alt = ''; im.src = ch.folder + '/' + ch.front; b.appendChild(im); }
         add('span', 'who', cleanName(sm.name, ch ? ch.defName : 'Fazendeiro'));
         add('small', '', 'Dia ' + sm.day + ' · ' + fmt(sm.gold) + ' ◎');
         add('small', '', (c.savedAt ? ago(c.savedAt) : 'data desconhecida') + (c.recovered ? ' · recuperado' : c.repaired ? ' · corrigido' : ''));
@@ -1373,14 +1404,14 @@
     setModal(`<h2>👤 Trocar personagem</h2><p>É só visual: seu progresso na fazenda continua o mesmo.</p><div class="cards inModal">${CHAR_IDS.map(id => cardHtml(CHARACTERS[id], id === S.char)).join('')}</div><div class="modalBtns"><button class="mb alt" data-a="close">Voltar</button></div>`);
   }
   function cardHtml(c, cur, edit) {
-    const card = `<button class="charCard${cur ? ' cur' : ''}" data-a="char" data-k="${c.id}"><img src="${c.folder}/front_walk.png" alt="${c.name}"><b class="cn">${c.name}</b><span class="role">${c.role}</span><small>${c.desc}</small>${cur ? '<em>em uso</em>' : ''}</button>`;
+    const card = `<button class="charCard${cur ? ' cur' : ''}" data-a="char" data-k="${c.id}"><img src="${c.folder}/${c.front}" alt="${c.name}"><b class="cn">${c.name}</b><span class="role">${c.role}</span><small>${c.desc}</small>${cur ? '<em>em uso</em>' : ''}</button>`;
     if (!edit) return card;
     return `<div class="charWrap">${card}<label class="nameField"><span>Nome</span><input type="text" maxlength="${NAME_MAX}" data-k="${c.id}" data-def="${c.defName}" value="${c.name}" placeholder="${c.defName}" autocomplete="off" autocapitalize="words" spellcheck="false"></label></div>`;
   }
   function openRename() {
     currentModal = 'rename';
     setModal(`<h2>✏️ Alterar nomes</h2><p>Escolha como cada personagem se chama. Seu progresso na fazenda continua o mesmo.</p>
-      <div class="renameRows">${CHAR_IDS.map(id => `<label class="renameRow"><img src="${CHARACTERS[id].folder}/front_walk.png" alt=""><span>${CHARACTERS[id].role}</span><input type="text" maxlength="${NAME_MAX}" data-k="${id}" data-def="${CHARACTERS[id].defName}" value="${CHARACTERS[id].name}" placeholder="${CHARACTERS[id].defName}" autocomplete="off" autocapitalize="words" spellcheck="false"></label>`).join('')}</div>
+      <div class="renameRows">${CHAR_IDS.map(id => `<label class="renameRow"><img src="${CHARACTERS[id].folder}/${CHARACTERS[id].front}" alt=""><span>${CHARACTERS[id].role}</span><input type="text" maxlength="${NAME_MAX}" data-k="${id}" data-def="${CHARACTERS[id].defName}" value="${CHARACTERS[id].name}" placeholder="${CHARACTERS[id].defName}" autocomplete="off" autocapitalize="words" spellcheck="false"></label>`).join('')}</div>
       <div class="modalBtns"><button class="mb alt" data-a="close">Cancelar</button><button class="mb" data-a="renamesave">Salvar</button></div>`);
     const el = $('modalBox').querySelector('input[data-k="' + S.char + '"]'); if (el) { el.focus(); el.select(); }
   }
@@ -1865,7 +1896,20 @@
     else { draw(true, 1); if (m < .98) draw(false, 1 - m); }
   }
 
+  // personagem com sheet (fazendeiro): o quadro vem da FASE da caminhada (ciclo de `loop` quadros por passada dupla); parado = quadro de repouso. Sem pernas girando por código:
+  // as pernas já estão desenhadas em cada quadro. Fica o respiro parado, o avanço ao usar ferramenta e o pulo.
+  function drawWalkerSprite() {
+    const dir = P.dir, wk = P.wk, name = DIR_NAMES[dir], loop = WALKER.loop[name], ph = P.walkT * WALK_FREQ / (2 * Math.PI);
+    const fr = wk > .12 ? loop[Math.floor(((ph % 1) + 1) % 1 * loop.length)] : WALKER.idle[name];
+    const img = IMGS.walk[name][fr], sc = 104 / WALKER.ref, w = img.width * sc, h = img.height * sc;
+    const bob = Math.sin(time * 2) * .6 * (1 - wk);
+    let ox = 0, oy = 0;
+    if (act) { const k = Math.sin(clamp(act.t / act.dur, 0, 1) * Math.PI); ox = DX[dir] * 5 * k; oy = DY[dir] * 4 * k + 2 * k; }
+    const hop = P.hop > 0 ? Math.sin(P.hop / .3 * Math.PI) * 14 : 0;
+    g.drawImage(img, P.x + ox - w / 2, P.y - bob + oy - hop - h + 6, w, h);
+  }
   function drawPlayerSprite() {
+    if (IMGS.walk) { drawWalkerSprite(); return; }
     const dir = P.dir, wk = P.wk, ph = P.walkT * WALK_FREQ, s = Math.sin(ph), u = Math.abs(s);
     const side = dir >= 2;
     let img = dir === 0 ? IMGS.front_walk : dir === 1 ? IMGS.back : IMGS.left_stand;
@@ -2236,7 +2280,7 @@
   // seleciona o personagem ativo: troca os sprites, ícones e retrato
   function setCharacter(id) {
     CHAR = CHARACTERS[id] || CHARACTERS.fazendeiro;
-    for (const n of SPRITE_LIST) IMGS[n] = CHAR_IMGS[CHAR.id][n];
+    for (const n of SPRITE_KEYS) IMGS[n] = CHAR_IMGS[CHAR.id][n];      // chaves que o personagem não tem ficam undefined (nada do anterior sobra)
     makeIcons();
     $('nameInfo').textContent = CHAR.name;
     hudCache.bag = undefined; hudCache.slot2 = undefined;
@@ -2283,7 +2327,7 @@
       SaveManager.session.startNew(prev); save();
     }
     if (loadIt) openMenu();      // Continuar: o jogo começa PAUSADO (menu aberto): nenhum tempo de jogo se perde e o clique serve de gesto para o áudio
-    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
+    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKER, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
   }
 
   async function boot() {
@@ -2315,7 +2359,11 @@
         attempt();
       }); };
       const jobs = TILE_LIST.map(n => load('assets/' + n + '.png', IMGS, n));
-      for (const id of CHAR_IDS) { CHAR_IMGS[id] = {}; for (const n of SPRITE_LIST) jobs.push(load(CHARACTERS[id].folder + '/' + n + '.png', CHAR_IMGS[id], n)); }
+      for (const id of CHAR_IDS) {
+        const C = CHARACTERS[id], ci = CHAR_IMGS[id] = {};
+        for (const n of C.walker ? TOOL_SPRITES : [...TOOL_SPRITES, ...BODY_SPRITES]) jobs.push(load(C.folder + '/' + n + '.png', ci, n));
+        if (C.walker) { jobs.push(load(C.folder + '/walk_sheet.png', ci, 'sheet').then(() => sliceWalker(ci))); jobs.push(load(C.folder + '/' + C.front, ci, 'front_walk')); }
+      }
       jobs.push(...Animals.load(load));
       await Promise.all(jobs);
       Art.init(); setCharacter('fazendeiro'); makeCloudSprites();
@@ -2379,8 +2427,8 @@
       selectSlot(last && cards[last - 1].status !== 'empty' ? last : (cards.find(c => c.status !== 'empty') || cards[0]).slot);
       $('slotCards').addEventListener('click', e => { const b = e.target.closest('.slotCard'); if (b && +b.dataset.slot !== sel) selectSlot(+b.dataset.slot); });
       // vitrine do título e tela de seleção
-      $('titleImg1').src = CHARACTERS.fazendeiro.folder + '/front_walk.png';
-      $('titleImg2').src = CHARACTERS.fazendeira.folder + '/front_walk.png';
+      $('titleImg1').src = CHARACTERS.fazendeiro.folder + '/' + CHARACTERS.fazendeiro.front;
+      $('titleImg2').src = CHARACTERS.fazendeira.folder + '/' + CHARACTERS.fazendeira.front;
       $('cards').innerHTML = CHAR_IDS.map(id => cardHtml(CHARACTERS[id], false, true)).join('');
       const showSelect = on => { $('charSelect').classList.toggle('hidden', !on); $('titleBox').classList.toggle('hidden', on); };
       // mostra o indicador de progresso e só então gera o mapa (que é pesado e congela a tela por um instante)

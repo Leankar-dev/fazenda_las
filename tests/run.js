@@ -25,6 +25,7 @@ const SCENARIOS = [
   'titulo-velho-apagado', 'titulo-velho-corrompido',                                // revisão da 1c (N5): Continuar com o título desatualizado não inicia jogo novo em silêncio
   'export-titulo', 'export-pausa', 'importar-invalido', 'importar-slots', 'importar-sem-espaco', 'e2e-exporta-importa',     // Fase 2a: exportar/importar arquivo (E2E: exportar → limpar tudo → recarregar → importar → idêntico)
   'indicador-salvamento', 'storage-aviso-boot', 'storage-cheio-aviso', 'persist-concedido', 'persist-negado', 'persist-sem-api', 'backup-metas',     // Fase 2b: indicador/faixa, storage indisponível, persist(), backup nas metas
+  'fazendeiro-sprites',                                                              // Fase de arte: fazendeiro com sprite sheet (5 quadros x 4 direções); a fazendeira segue no desenho antigo
   'casa-principal',                                                                  // Fase de arte: casa de tijolos no lugar do celeiro (desenho, colisão, porta, luzes)
   'cavalo-sprites',                                                                  // Fase de arte: cavalo animado (sprite sheet 5 quadros x 4 direções)
   'lock-bloqueada', 'lock-silenciosa', 'lock-fecha-sozinha', 'lock-cede', 'lock-roubado', 'lock-sem-api',                                     // Fase 2c: Web Locks (2ª aba não inicia nem grava; Assumir aqui; roubo; sem API)

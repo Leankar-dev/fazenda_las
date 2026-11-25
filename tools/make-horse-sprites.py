@@ -79,9 +79,9 @@ def cut(i, sl):
 
 
 sheet = np.zeros((CELL_H * ROWS, CELL_W * COLS, 4), np.uint8)
-foot = {}; idle = {}; heights = []
+foot = {}; idle = {}; heights = []; masks = {}; idle_spread = {}
 for r, row in enumerate(grid):
-    widths = []; spread = []
+    widths = []; spread = []; masks[ROW_NAMES[r]] = []
     for c, (i, sl, area) in enumerate(row):
         f, m = cut(i, sl)
         h, w = f.shape[:2]
@@ -91,13 +91,25 @@ for r, row in enumerate(grid):
         ox = min(max(ox, 0), CELL_W - w)
         oy = CELL_H - PAD_B - h
         sheet[r * CELL_H + oy: r * CELL_H + oy + h, c * CELL_W + ox: c * CELL_W + ox + w] = f
-        widths.append(w)
+        widths.append(w); masks[ROW_NAMES[r]].append(np.pad(m, ((CELL_H - PAD_B - h, PAD_B), (ox, CELL_W - ox - w))))
         if r < 2: heights.append(h)
         low = m[int(m.shape[0] * 0.62):]                                      # as pernas (parte de baixo): quanto mais juntas, mais "parado" o quadro
         cols = np.nonzero(low.any(0))[0]; spread.append(int(cols.max() - cols.min()) if len(cols) else 0)
-    idle[ROW_NAMES[r]] = int(np.argmin(spread))                              # quadro de repouso = pernas mais juntas
+    idle_spread[ROW_NAMES[r]] = spread
     foot[ROW_NAMES[r]] = int(np.median(widths))                              # largura típica do corpo: a sombra usa isto, não a da célula
 
+# `loop`: o ÚLTIMO quadro de uma linha costuma repetir o 1º (fecha o ciclo): no laço ele travaria um instante a cada volta -> fica de fora quando for quase igual ao 1º
+def diff(a, b): return float((a ^ b).sum()) / max(1.0, float((a | b).sum()))
+DUP_RATIO = 0.55
+loop = {}
+for name in ROW_NAMES:
+    mk = masks[name]; frames = list(range(COLS))
+    neigh = [diff(mk[i], mk[i + 1]) for i in range(COLS - 1)]
+    closes = diff(mk[0], mk[COLS - 1])
+    if closes < DUP_RATIO * min(neigh[0], neigh[-1]): frames = frames[:-1]
+    loop[name] = frames
+    print(name, 'laço', frames, '| dif 1º-último %.3f vs vizinhos %.2f / %.2f' % (closes, neigh[0], neigh[-1]))
+for name in ROW_NAMES: idle[name] = min(loop[name], key=lambda i: idle_spread[name][i])
 os.makedirs(OUT, exist_ok=True)
 png = os.path.join(OUT, 'walk_sheet.png')
 cv2.imwrite(png, cv2.cvtColor(sheet, cv2.COLOR_RGBA2BGRA), [cv2.IMWRITE_PNG_COMPRESSION, 9])
@@ -120,7 +132,7 @@ cv2.imwrite(os.path.join(OUT, 'icon.png'), cv2.cvtColor(icon, cv2.COLOR_RGBA2BGR
 meta = {
     'image': 'walk_sheet.png', 'cell': [CELL_W, CELL_H], 'columns': COLS, 'rows': ROW_NAMES, 'frames': COLS,
     'anchor': 'pés no centro-base da célula (PAD_B px acima da borda inferior)', 'padBottom': PAD_B,
-    'bodyHeight': int(np.median(heights)), 'footprintWidth': foot, 'idleFrame': idle, 'size': [CELL_W * COLS, CELL_H * ROWS],
+    'bodyHeight': int(np.median(heights)), 'footprintWidth': foot, 'idleFrame': idle, 'loop': loop, 'size': [CELL_W * COLS, CELL_H * ROWS],
     'note': 'ciclo de caminhada de 5 quadros por direção; "idle" = idleFrame (pernas mais juntas). Direções do jogo: 0 baixo(front) · 1 cima(back) · 2 esquerda · 3 direita',
 }
 with open(os.path.join(OUT, 'walk_sheet.json'), 'w', encoding='utf-8') as fh: json.dump(meta, fh, ensure_ascii=False, indent=2); fh.write('\n')

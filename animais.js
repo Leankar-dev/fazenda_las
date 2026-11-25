@@ -43,6 +43,7 @@ const Animals = (() => {
     rows: { right: 0, left: 1, down: 2, up: 3 },
     foot: { right: 168, left: 169, down: 51, up: 50 },                         // largura do corpo por direção (a sombra usa isto, não a da célula)
     idle: { right: 2, left: 3, down: 1, up: 4 },                               // quadro de repouso (pernas juntas)
+    loop: { right: [0, 1, 2, 3], left: [0, 1, 2, 3], down: [0, 1, 2, 3, 4], up: [0, 1, 2, 3, 4] },     // quadros do ciclo (de lado o 5º repete o 1º: fica de fora, senão o passo travaria a cada volta)
     fps: 5, fpsRide: 9,                                                        // quadros/s andando sozinho e montado (o montado é quase 2x mais rápido)
   };
   const DIR_NAMES = ['down', 'up', 'left', 'right'];                           // a.dir: 0 baixo · 1 cima · 2 esquerda · 3 direita
@@ -304,7 +305,7 @@ const Animals = (() => {
     const im = IMGS[a.kind], K = KINDS[a.kind];
     const alt = Math.floor(a.t * 3.4) % 2 === 0;
     if (a.kind === 'cavalo') {
-      const d = DIR_NAMES[a.dir] || 'down', fr = a.moving ? Math.floor(a.wp || 0) % HORSE.cols : HORSE.idle[d];
+      const d = DIR_NAMES[a.dir] || 'down', L = HORSE.loop[d], fr = a.moving ? L[Math.floor(a.wp || 0) % L.length] : HORSE.idle[d];
       return { img: im.walk[d][fr], flip: false, foot: HORSE.foot[d] };
     }
     if (a.dir >= 2) {

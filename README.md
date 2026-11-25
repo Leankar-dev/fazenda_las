@@ -21,7 +21,7 @@ Para adicionar outro personagem: crie `assets/<pasta>/` com os mesmos 16 sprites
 ## Animais
 - **Cachorro** (já vem com você): passeia sozinho pela fazenda e senta para descansar. Aperte **C** (ou o botão 🐕 no celular) para **chamá-lo**: ele vem correndo e acompanha você por cerca de 50 s, depois volta a passear. Ganha carinho com **E** e todo dia cava um **tesouro** em algum lugar da fazenda (monte de terra com patinha) — cave com **E**.
 - **Curral** (a leste, cercado, com portão a oeste): compre na loja até **4 vacas** (leite diário, ordenhe com **E** quando aparecer o balão), **4 porcos** (carne 2× por dia e trufas) e **2 cavalos**.
-- **Cavalo:** **E** perto dele para montar, **E** de novo para desmontar. Ele tem **ciclo de caminhada animado** nas 4 direções (andando solto ou montado; parado fica em pé com as pernas juntas). Cavalgando você anda quase 2× mais rápido, mas só interage (loja, caixa, poço), sem usar ferramentas.
+- **Cavalo:** **E** perto dele para montar, **E** de novo para desmontar. Ele tem **ciclo de caminhada animado** nas 4 direções (4 quadros de lado) (andando solto ou montado; parado fica em pé com as pernas juntas). Cavalgando você anda quase 2× mais rápido, mas só interage (loja, caixa, poço), sem usar ferramentas.
 - **Ordenhar:** chegue perto da vaca com o balão de balde e use as **Luvas (4) + Espaço** (ou **E**). Uma vez por vaca por dia.
 - **Carne do porco:** 2 vezes por dia (ao amanhecer e a partir das 13:00) cada porco dá 1 carne — quando aparecer o balão de presunto, use **E** ou as **Luvas (4) + Espaço**. Carne vende por 30 ◎.
 - **Galinhas:** são 6 e botam ovos 2 vezes por dia (ao amanhecer e ao meio-dia, 13:00). Ovos não coletados da manhã ficam no chão até você dormir.
@@ -69,7 +69,7 @@ Os jogos ficam **só neste navegador** (`localStorage`): limpar os dados do site
 - Ícones do PWA: `python tools/make-icons.py` (Pillow) regenera `pwa/icon-*.png` a partir dos sprites.
 
 ## Arquivos
-- `assets/fazendeiro/` – sprites do Elias (recortados de `docs/imagem_fazendeiro.jpeg`)
+- `assets/fazendeiro/` – o Elias: **sprite sheet de caminhada** `walk_sheet.png` (560×688, fundo transparente, 4 direções × 5 quadros, células 112×172, altura normalizada entre as direções) + `walk_sheet.json` (laço do ciclo, quadro de repouso), `front.png` (retrato 2× do título, da escolha e do HUD) e as ferramentas/cesto (`basket`, `glove1/2`, `pickaxe`, `pitchfork`, `seedbag_empty`). Gerados de `docs/fazendeiro_andando.jpeg` por `python tools/make-fazendeiro-sprites.py` (numpy, scipy, opencv); o jogo recorta a sheet em 20 quadros ao carregar. A Karen continua no desenho antigo (`assets/fazendeira/`)
 - `assets/fazendeira/` – sprites da Karen (recortados de `docs/imagem_fazendeira.jpeg`, inclui os chapéus)
 - `assets/tile_*.png` – tiles de terreno compartilhados pelos dois personagens
 - `assets/casa.png` (+ `casa.json`) – a **casa principal** (tijolos, pórtico com porta vermelha; as janelas acendem à noite), gerada de `docs/casa_fazenda.jpeg` por `python tools/make-house-sprite.py` (remove o "xadrez" do fundo do JPEG; numpy, scipy, opencv)
