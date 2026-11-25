@@ -19,7 +19,7 @@ const built = (opts) => { const d = tmp(); dirs.push(d); return Object.assign(bu
 /* ============================ build ============================ */
 test('build: publica só o necessário (nada de docs, tests, tools, .github, .jpeg, README) e todos os assets', () => {
   const b = built(), all = listAll(b.dir);
-  for (const f of all) assert.ok(/^(index\.html|style\.css|art\.js|animais\.js|pesca\.js|save\.js|game\.js|manifest\.webmanifest|service-worker\.js|pwa\/[^/]+|assets\/.+)$/.test(f), 'arquivo inesperado publicado: ' + f);
+  for (const f of all) assert.ok(/^(index\.html|style\.css|art\.js|animais\.js|pesca\.js|rebanho\.js|save\.js|game\.js|manifest\.webmanifest|service-worker\.js|pwa\/[^/]+|assets\/.+)$/.test(f), 'arquivo inesperado publicado: ' + f);
   assert.ok(!all.some(f => /\.jpe?g$/i.test(f)), 'nenhum .jpeg');
   const src = listAll(path.join(ROOT, 'assets')); assert.deepStrictEqual(all.filter(f => f.startsWith('assets/')).map(f => f.slice(7)), src, 'os assets publicados são exatamente os do repositório (caixa dos nomes incluída)');
   for (const f of ['index.html', 'service-worker.js', 'manifest.webmanifest', 'pwa/icon-192.png', 'pwa/icon-512.png', 'pwa/icon-maskable-512.png', 'pwa/icon-180.png']) assert.ok(all.includes(f), 'falta ' + f);
@@ -31,7 +31,7 @@ test('build: determinístico (mesmo conteúdo → mesma versão, mesmos arquivos
 });
 test('build: index.html publicado — ?v= em TODO css/js, manifesto, ícone, meta de versão e registro do SW; o do repositório continua limpo', () => {
   const b = built({ version: 'v9' }), html = fs.readFileSync(path.join(b.dir, 'index.html'), 'utf8'), repo = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  for (const f of ['style.css', 'art.js', 'animais.js', 'pesca.js', 'save.js', 'game.js']) assert.ok(html.includes('"' + f + '?v=v9"'), f + ' sem ?v=');
+  for (const f of ['style.css', 'art.js', 'animais.js', 'pesca.js', 'rebanho.js', 'save.js', 'game.js']) assert.ok(html.includes('"' + f + '?v=v9"'), f + ' sem ?v=');
   assert.ok(!/(?:href|src)="(?:style\.css|[a-z]+\.js)"/.test(html), 'sobrou css/js sem versão');
   for (const s of ['rel="manifest" href="manifest.webmanifest"', 'rel="apple-touch-icon"', 'name="theme-color"', 'name="fazenda-build" content="v9"', 'serviceWorker.register("service-worker.js")']) assert.ok(html.includes(s), 'falta ' + s);
   assert.ok(!/serviceWorker|manifest|fazenda-build/.test(repo), 'o index.html do repositório (file://) não deve registrar SW nem citar manifesto');
@@ -50,7 +50,7 @@ test('service worker: marcadores trocados, lista de arquivos == o que foi public
   assert.ok(sw.includes("const VERSION = 'v1';") && !/__VERSION__|__PRECACHE__/.test(sw));
   const files = listAll(b.dir).filter(f => f !== 'service-worker.js'), pre = b.precache.map(u => u.split('?')[0]).sort();
   assert.deepStrictEqual(pre, files); assert.strictEqual(new Set(b.precache).size, b.precache.length, 'sem duplicados');
-  for (const f of ['style.css', 'art.js', 'animais.js', 'pesca.js', 'save.js', 'game.js']) assert.ok(b.precache.includes(f + '?v=v1'));
+  for (const f of ['style.css', 'art.js', 'animais.js', 'pesca.js', 'rebanho.js', 'save.js', 'game.js']) assert.ok(b.precache.includes(f + '?v=v1'));
   assert.ok(b.precache.includes('index.html') && !b.precache.includes('service-worker.js'), 'o SW não guarda a si mesmo');
 });
 test('build: falha (código 1) se o index.html deixar de citar um arquivo de código — nunca publica um site pela metade', () => {
@@ -58,11 +58,11 @@ test('build: falha (código 1) se o index.html deixar de citar um arquivo de có
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'); assert.ok(html.includes('src="game.js"'));
   // roda o build num projeto-cópia mínimo com o index.html sem o game.js
   const proj = path.join(d, 'p'); fs.mkdirSync(proj); fs.cpSync(path.join(ROOT, 'tools'), path.join(proj, 'tools'), { recursive: true });
-  for (const f of ['style.css', 'art.js', 'animais.js', 'pesca.js', 'save.js', 'game.js', 'manifest.webmanifest']) fs.copyFileSync(path.join(ROOT, f), path.join(proj, f));
+  for (const f of ['style.css', 'art.js', 'animais.js', 'pesca.js', 'rebanho.js', 'save.js', 'game.js', 'manifest.webmanifest']) fs.copyFileSync(path.join(ROOT, f), path.join(proj, f));
   fs.cpSync(path.join(ROOT, 'pwa'), path.join(proj, 'pwa'), { recursive: true }); fs.mkdirSync(path.join(proj, 'assets')); fs.copyFileSync(path.join(ROOT, 'assets', 'tile_bare.png'), path.join(proj, 'assets', 'tile_bare.png'));
   fs.writeFileSync(path.join(proj, 'index.html'), html.replace('<script src="game.js"></script>', ''));
   const r = cp.spawnSync(process.execPath, [path.join(proj, 'tools', 'build-site.js'), '--out=_site'], { encoding: 'utf8' });
-  assert.strictEqual(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, /5 de 6/);
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, /6 de 7/);
   fs.writeFileSync(path.join(proj, 'index.html'), html); const ok = cp.spawnSync(process.execPath, [path.join(proj, 'tools', 'build-site.js'), '--out=_site'], { encoding: 'utf8' });
   assert.strictEqual(ok.status, 0, ok.stderr);
 });
@@ -137,7 +137,7 @@ test('casa: casa.png × casa.json × constantes HOUSE_ART do game.js batem; o ce
 });
 test('assets: toda imagem citada por literal no código existe com a CAIXA exata (o Pages é case-sensitive, o Windows não)', () => {
   const real = new Set(listAll(path.join(ROOT, 'assets')).map(f => 'assets/' + f)); let n = 0;
-  for (const f of ['game.js', 'animais.js', 'pesca.js', 'art.js', 'style.css', 'index.html']) {
+  for (const f of ['game.js', 'animais.js', 'pesca.js', 'rebanho.js', 'art.js', 'style.css', 'index.html']) {
     for (const m of fs.readFileSync(path.join(ROOT, f), 'utf8').matchAll(/assets\/[A-Za-z0-9_\-./]+\.(?:png|json)/g)) { n++; assert.ok(real.has(m[0]), f + ' cita ' + m[0] + ' que não existe (confira a caixa)'); }
   }
   assert.ok(n >= 4, 'achou poucas referências: ' + n);

@@ -2,7 +2,7 @@
 'use strict';
 /* Monta o site que vai para o GitHub Pages (Fase 3).   uso: node tools/build-site.js [--out=_site]
    Só publica o necessário (nada de docs/, tests/, tools/, .github/, .jpeg, README). Sem dependências (Node 18+). O que faz:
-     1. copia index.html, style.css, art.js, animais.js, pesca.js, save.js, game.js, manifest.webmanifest, pwa/ e assets/
+     1. copia index.html, style.css, art.js, animais.js, pesca.js, rebanho.js, save.js, game.js, manifest.webmanifest, pwa/ e assets/
      2. VERSÃO = hash do conteúdo de tudo isso (12 hex) — igual conteúdo, igual versão (build reproduzível); `SITE_VERSION=...` força uma (testes)
      3. index.html publicado: `style.css?v=VER`, `*.js?v=VER` (quebra o cache da CDN do Pages), manifesto, ícones, `<meta name="fazenda-build">` e o registro do SW
         (só aqui: o index.html do repositório continua abrindo por file:// sem service worker)
@@ -12,7 +12,7 @@ const fs = require('fs'), path = require('path'), crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..');
 const PAGES = ['index.html'];
-const CODE = ['style.css', 'art.js', 'animais.js', 'pesca.js', 'save.js', 'game.js'];             // citados no index.html: ganham ?v=
+const CODE = ['style.css', 'art.js', 'animais.js', 'pesca.js', 'rebanho.js', 'save.js', 'game.js'];             // citados no index.html: ganham ?v=
 const STATIC = ['manifest.webmanifest'];
 const DIRS = ['pwa', 'assets'];
 const TEMPLATE = 'tools/service-worker.template.js';

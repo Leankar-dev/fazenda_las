@@ -28,9 +28,10 @@ jobs:
           node-version: 22
       - name: Testes unitários (SaveManager e build do site)
         run: |
-          for f in save.js game.js art.js animais.js pesca.js tools/build-site.js tools/service-worker.template.js; do node --check "$f"; done
+          for f in save.js game.js art.js animais.js pesca.js rebanho.js tools/build-site.js tools/service-worker.template.js; do node --check "$f"; done
           node tests/save.test.js
           node tests/pesca.test.js
+          node tests/rebanho.test.js
           node tests/build.test.js
       - name: Montar o site
         run: node tools/build-site.js --out=_site
