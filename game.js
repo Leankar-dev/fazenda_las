@@ -53,6 +53,7 @@
   const DIR_NAMES = ['down', 'up', 'left', 'right'];                           // P.dir: 0 baixo · 1 cima · 2 esquerda · 3 direita
   const TILE_LIST = ['casa', 'tile_bare', 'tile_muddy', 'tile_loose', 'tile_grassA', 'tile_grassB', 'tile_grassC', 'tile_grassD', 'tile_wood'];
   const CHAR_IMGS = {};
+  const PIMGS = {};                       // sprites de pesca (assets/pesca/*.png): peixes, equipamentos, boia, doca, estaca, margem
   // recorta a sheet de UM personagem em canvas (quadros) e deriva as imagens que o cavaleiro usa (`back`, `left_stand` = recortes justos do repouso; `left_stand` olha para a DIREITA, como no sprite antigo). Sheet que não carregou = quadros vazios.
   function sliceWalker(ci, W) {
     const sh = ci.sheet, [cw, ch] = W.cell, ok = !!sh && sh.width >= cw * W.cols && sh.height >= ch * DIR_NAMES.length, walk = {};
@@ -104,6 +105,7 @@
     { id: 'luvas',    name: 'Luvas — colher plantas e frutas, ordenhar vacas',           img: 'glove2' },
     { id: 'picareta', name: 'Picareta — quebrar pedras e tocos',           img: 'pickaxe' },
     { id: 'machado',  name: 'Machado — cortar árvores (rende madeira)',    img: null },
+    { id: 'vara',     name: 'Vara de pesca — de frente para o lago, ESPAÇO lança; aperte de novo quando a boia afundar', img: null },
   ];
   const BASKET_CAP = [20, 40, 80], BASKET_COST = [0, 150, 400];
   const CAN_CAP = [15, 30, 50], CAN_COST = [0, 120, 350];
@@ -136,13 +138,17 @@
   const WELL  = { x: 21, y: 3, w: 2, h: 2 };
   const COOP  = { x: 26, y: 7, w: 2, h: 2 };
   const POND  = { cx: 38.5, cy: 9, rx: 6, ry: 4.4 };
+  /* DOCA: tábuas sobre a margem OESTE do lago (x=32 é terra; 33-35 eram água). É andável (não é água nem sólida) e de lá a boia alcança mais longe. O jogador entra pelo oeste, pela terra. */
+  const DOCK  = { x: 32, y: 9, w: 4, h: 1 };
   const PLOT  = { x0: 6, y0: 8, x1: 17, y1: 15 };
   const PATH_Y = 5, PATH_X0 = 5, PATH_X1 = 24;
   const SPAWN = { x: 8.5 * TS, y: 6.2 * TS };
   const inRect = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+  const onDock = (x, y) => inRect(DOCK, x, y);
+  const dockZone = { x: DOCK.x - 6, y: DOCK.y - 2, w: DOCK.w + 6, h: DOCK.h + 4 };      // entrada da doca: sem árvores, pedras ou mato
   const isWater = (x, y) => {
     const dx = (x + .5 - POND.cx) / POND.rx, dy = (y + .5 - POND.cy) / POND.ry;
-    return dx * dx + dy * dy < 1;
+    return dx * dx + dy * dy < 1 && !onDock(x, y);
   };
   const isPath = (x, y) => y === PATH_Y && x >= PATH_X0 && x <= PATH_X1;
 
@@ -162,6 +168,7 @@
   let paused = true, running = false, modalOpen = false, sleeping = false, hudT = 0;
   let mouse = { x: 0, y: 0, on: false }, mouseMode = false;
   let act = null, cooldown = 0;
+  let lake = null, cast = null, castCd = 0, shopTab = 'farm';      // pesca: o lago com os peixes, o lançamento ativo, intervalo entre lançamentos; aba da loja
   let chickens = [], eggs = [];
   let parts = [];
   let rain = [];
@@ -181,10 +188,11 @@
       harvest: { cenoura: 0, tomate: 0, milho: 0, abobora: 0, maca: 0, laranja: 0, pessego: 0, limao: 0 },
       eggs: 0, stone: 0, wood: 0, milk: 0, truffle: 0, meat: 0, laid: 1,
       owned: { vaca: 0, porco: 0, cavalo: 0 }, milked: [], meatDone: [], digs: [], truffleList: [],
-      up: { basket: 0, can: 0, boots: 0 },
+      up: { basket: 0, can: 0, boots: 0, rod: 0, reel: 0 },
+      ...Pesca.defaults(),                      // fish · gear · bait (pesca.js)
       char: 'fazendeiro', selSeed: 'cenoura', tool: 0, dir: 0, px: SPAWN.x, py: SPAWN.y,
       rain: false, soil: new Array(MW * MH).fill(0), crops: {}, obs: [], eggList: [], names: {},
-      obsInit: false, felled: [], goal: 0, stat: { till: 0, plant: 0, water: 0, harvest: 0, sold: 0, sleep: 0 }, won: false,
+      obsInit: false, felled: [], goal: 0, stat: { till: 0, plant: 0, water: 0, harvest: 0, sold: 0, sleep: 0, fish: 0 }, won: false,
     };
   }
 
@@ -214,6 +222,7 @@
         if (nearPond && r() < .06 && !isPath(x, y) && !isWater(x, y) && Math.hypot(x - POND.cx, (y - POND.cy) * 1.3) > POND.rx + .6) forest = true;
       }
       if (Animals.inArea(x, y, 1)) forest = false;
+      if (!border && inRect(dockZone, x, y)) forest = false;
       if (border || forest) {
         const tv = Math.floor(r() * 3);                       // (sempre sorteia, para o mapa não mudar)
         if (felled.has(x + ',' + y)) continue;                // árvore já cortada pelo jogador (inclui as da borda)
@@ -235,6 +244,7 @@
       if (x >= 5 && x <= 12 && y <= 7) continue;
       if (inRect({ x: COOP.x - 1, y: COOP.y - 1, w: 4, h: 5 }, x, y)) continue;
       if (Animals.inArea(x, y, 2)) continue;
+      if (inRect(dockZone, x, y)) continue;
       const q = r();
       if (q < .03) list.push(['rock', x, y, Math.floor(r() * 2), 3]);
       else if (q < .045) list.push(['stump', x, y, 0, 4]);
@@ -294,6 +304,30 @@
         c.drawImage(IMGS['tile_muddy'], x * TS, y * TS, TS + 1, TS + 1);
       }
       c.restore();
+      // MARGEM ROCHOSA do lago (assets/pesca/margem.png: pedras com musgo, como na folha de pesca): faixa molhada + remendos do tile com a borda esfumada + juncos.
+      // A água é desenhada depois (drawPond), então a faixa pode entrar um pouco sob ela. O lado da doca fica livre.
+      {
+        const sh = PIMGS.margem, cx = POND.cx * TS, cy = POND.cy * TS, rr = Art.mulberry32(5150), N = 170, pw = Math.min(96, sh.width), ph = Math.min(96, sh.height);
+        const dockSide = (x, y) => x < (DOCK.x + 1.2) * TS && Math.abs(y - (DOCK.y + .5) * TS) < 1.1 * TS;
+        c.save(); c.strokeStyle = 'rgba(28,48,44,.42)'; c.lineWidth = 30; c.beginPath(); c.ellipse(cx, cy, POND.rx * TS * 1.0, POND.ry * TS * 1.0, 0, 0, Math.PI * 2); c.stroke(); c.restore();      // terra molhada
+        for (let i = 0; i < N; i++) {
+          const a = i / N * Math.PI * 2 + (rr() - .5) * .04, k = .99 + rr() * .1, x = cx + Math.cos(a) * POND.rx * TS * k, y = cy + Math.sin(a) * POND.ry * TS * k;
+          tg.globalCompositeOperation = 'source-over'; tg.clearRect(0, 0, TS + 40, TS + 40);
+          const sx = rr() * (sh.width - pw), sy = rr() * Math.max(1, (sh.height - ph) * .5);                 // só a metade de cima do tile (pedra e musgo; embaixo é água)
+          tg.save(); tg.translate((TS + 40) / 2, (TS + 40) / 2); tg.rotate(Math.floor(rr() * 4) * Math.PI / 2); tg.drawImage(sh, sx, sy, pw, ph, -(TS + 40) / 2, -(TS + 40) / 2, TS + 40, TS + 40); tg.restore();
+          tg.globalCompositeOperation = 'destination-in'; tg.drawImage(feather, 0, 0);
+          if (!dockSide(x, y)) { c.globalAlpha = .96; c.drawImage(tmp, x - (TS + 40) / 2, y - (TS + 40) / 2); c.globalAlpha = 1; }
+        }
+        for (let i = 0; i < 16; i++) {                                                                        // juncos (taboas) em tufos
+          const a = rr() * Math.PI * 2, x = cx + Math.cos(a) * POND.rx * TS * (1.04 + rr() * .06), y = cy + Math.sin(a) * POND.ry * TS * (1.04 + rr() * .06);
+          if (dockSide(x, y)) continue;
+          for (let j = 0; j < 4; j++) {
+            const bx = x + (j - 1.5) * 5 + rr() * 3, h = 26 + rr() * 16, lean = (rr() - .5) * 7;
+            c.strokeStyle = '#5d7f2f'; c.lineWidth = 2; c.beginPath(); c.moveTo(bx, y); c.quadraticCurveTo(bx + lean * .4, y - h * .5, bx + lean, y - h); c.stroke();
+            if (j % 2 === 0) { c.fillStyle = '#6b4423'; c.beginPath(); c.ellipse(bx + lean, y - h + 3, 2.4, 6, 0, 0, 7); c.fill(); }
+          }
+        }
+      }
       // canteiro inicial de terra nua: miolo sem rotação + borda esfumada
       for (let y = PLOT.y0 + 1; y < PLOT.y1; y++) for (let x = PLOT.x0 + 1; x < PLOT.x1; x++) {
         c.drawImage(IMGS['tile_bare'], x * TS, y * TS, TS + 1, TS + 1);
@@ -506,6 +540,11 @@
       pop()     { tone(300, .08, 'sine', .25, 400); },
       error()   { tone(160, .2, 'sawtooth', .13, -50); },
       buy()     { tone(660, .08, 'triangle', .2); tone(990, .16, 'triangle', .2, 0, .07); },
+      cast()    { noise(.2, .22, 1800, 'bandpass', 0, 2600); tone(520, .14, 'sine', .14, -260); },
+      splash()  { noise(.32, .3, 900, 'lowpass', 0, 1800); tone(280, .16, 'sine', .12, -90); },
+      bite()    { tone(880, .08, 'square', .12); tone(1175, .1, 'square', .12, 0, .09); },
+      reel()    { noise(.55, .2, 3000, 'highpass', 0, 5200); },
+      catchfish() { tone(523, .1, 'triangle', .2); tone(659, .1, 'triangle', .2, 0, .09); tone(988, .24, 'triangle', .22, 0, .18); },
       sleep()   { [523, 659, 784, 1046].forEach((f, i) => tone(f, .5, 'sine', .15, 0, i * .18)); },
       level()   { [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, .3, 'triangle', .18, 0, i * .1)); },
       chirp()   { const f = rnd(2400, 3600); tone(f, .07, 'sine', .06, 500); tone(f + 300, .07, 'sine', .06, 500, .1); if (Math.random() < .5) tone(f + 500, .06, 'sine', .05, 300, .2); },
@@ -692,7 +731,7 @@
     const posPair = e => Number.isFinite(e[0]) && Number.isFinite(e[1]) && e[0] >= 0 && e[1] >= 0 && e[0] <= MW * TS && e[1] <= MH * TS;
 
     Pint(st, 'day', 1, 1e6, 1); Pnum(st, 'gold', 0, 1e12, 100); Pnum(st, 'earned', 0, 1e12, 0); Pnum(st, 'min', DAY_START, DAY_END, DAY_START); Pnum(st, 'energy', 0, 100, 100);
-    st.up = objOf(st.up, ['basket', 'can', 'boots'], dflt.up);
+    st.up = objOf(st.up, ['basket', 'can', 'boots', 'rod', 'reel'], dflt.up);
     Pint(st.up, 'basket', 0, BASKET_CAP.length - 1, 0); Pint(st.up, 'can', 0, CAN_CAP.length - 1, 0); Pint(st.up, 'boots', 0, BOOTS.length - 1, 0);
     Pnum(st, 'water', 0, CAN_CAP[st.up.can], Math.min(dflt.water, CAN_CAP[st.up.can]));
     Pint(st, 'goal', 0, GOALS.length, 0); Pint(st, 'tool', 0, TOOLS.length - 1, 0); Pint(st, 'dir', 0, 3, 0);
@@ -707,6 +746,7 @@
     for (const k in ANIMAL_SHOP) Pint(st.owned, k, 0, ANIMAL_SHOP[k].max, 0);      // sem isso um save com 4000 porcos cria 4000 porcos
     st.stat = objOf(st.stat, Object.keys(dflt.stat), dflt.stat);
     for (const k in dflt.stat) Pint(st.stat, k, 0, 1e9, 0);
+    Pesca.sanitize(st, K);      // peixes, acessórios, iscas e níveis da vara/carretel (regras no pesca.js; save hostil não cria 1e9 peixes)
     // listas do dia
     st.milked = Array.isArray(st.milked) ? st.milked.slice(0, 16).map(v => !!v) : (bad(), []);
     st.meatDone = Array.isArray(st.meatDone) ? st.meatDone.slice(0, 16).map(v => v == null ? 0 : Number.isFinite(v) ? clampInt(v, 0, 0, 2) : (bad(), 0)) : (bad(), []);
@@ -990,11 +1030,91 @@
     }
     return { ok: false };
   }
-  const COST = { weed: 1, till: 2.5, water: .7, plant: .4, plantTree: 1, harvest: .6, mine: 4, chop: 5, pickTree: .6, milk: .8, meat: .8, refill: 0 };
+  const COST = { weed: 1, till: 2.5, water: .7, plant: .4, plantTree: 1, harvest: .6, mine: 4, chop: 5, pickTree: .6, milk: .8, meat: .8, refill: 0, cast: 1.2 };
+
+  /* ---------------- pesca ---------------- */
+  // ponto "bem dentro da água": o ponto e os 4 vizinhos próximos são água (peixe e boia não ficam colados na margem nem na doca)
+  const deepWater = (x, y) => { const w = (px, py) => isWater(Math.floor(px / TS), Math.floor(py / TS)); return w(x, y) && w(x + 12, y) && w(x - 12, y) && w(x, y + 10) && w(x, y - 10); };
+  function initLake() {
+    cast = null;
+    lake = Pesca.createLake({ inWater: deepWater, rnd: Math.random, bounds: { x0: (POND.cx - POND.rx) * TS, y0: (POND.cy - POND.ry) * TS, x1: (POND.cx + POND.rx) * TS, y1: (POND.cy + POND.ry) * TS } });
+    lake.restock(Pesca.LAKE_TARGET);
+  }
+  function cancelCast() { if (cast) { Pesca.cancel(cast); cast = null; } }
+  function fishStart(tx, ty) {
+    if (castCd > 0 || !lake) return;
+    const f = Pesca.fx(S);
+    if (!f.canFish) { toast('Compre uma vara no empório (aba Pesca) para pescar 🎣', 'bad'); Snd.error(); return; }
+    if (!isWater(tx, ty)) { toast('Fique de frente para a água do lago (a doca ajuda) e use a vara 🎣', 'bad'); Snd.error(); return; }
+    const cost = COST.cast * f.energyMul;
+    if (S.energy < cost) { toast('Sem energia para pescar! Coma um peixe (F) ou uma torta no empório.', 'bad'); Snd.error(); return; }
+    // onde a boia cai: segue na direção do olhar, até o alcance (maior na doca), sempre em água funda
+    const reach = (onDock(Math.floor(P.x / TS), Math.floor(P.y / TS)) ? 4.4 : 2.6) * TS, ox = (tx + .5) * TS, oy = (ty + .5) * TS;
+    let bx = ox, by = oy;
+    for (let d = 16; d <= reach; d += 16) { const nx = ox + DX[P.dir] * d, ny = oy + DY[P.dir] * d; if (!deepWater(nx, ny)) break; bx = nx; by = ny; }
+    const c = Pesca.startCast(S, lake, bx + rnd(-6, 6), by + rnd(-6, 6), Math.random, Pesca.activity(S));
+    if (c.error) { toast(c.error, 'bad'); Snd.error(); return; }
+    S.energy = Math.max(0, S.energy - cost); c.ox = P.x; c.oy = P.y; cast = c; Snd.cast();
+    if (c.baitUsed && S.bait[c.baitUsed] === 0) toast('Acabaram as iscas ' + (c.baitUsed === 'viva' ? 'vivas' : 'de cera') + ' — compre mais no empório.');
+  }
+  function fishPress() {                       // espaço / clique / E com a linha na água: fisga (ou recolhe, se for cedo demais). Devolve true se havia lançamento.
+    if (!cast) return false;
+    const r = Pesca.press(cast);
+    if (r === 'hook') Snd.reel(); else if (r === 'cancel') { cast = null; castCd = .3; toast('Você recolheu a linha. Espere a boia afundar (aparece um "!").'); Snd.pop(); }
+    return true;
+  }
+  function fishEvent(e) {
+    const c = cast;
+    if (e === 'splash') { Snd.splash(); parts.push({ k: 'ring', x: c.bx, y: c.by, r: 4, grow: 30, life: 0, max: .8, c: '#ffffff' }); }
+    else if (e === 'bite') Snd.bite();
+    else if (e === 'nothing') toast('Nada mordeu por aqui. Os peixes aparecem na água: tente outro ponto do lago (da doca você alcança mais longe).');
+    else if (e === 'escaped') { toast('Tarde demais — o peixe escapou! Aperte assim que a boia afundar (aparece um "!").', 'bad'); Snd.error(); }
+    else if (e === 'lost') { toast('O peixe se soltou da linha! Um carretel melhor ou um puçá ajudam.', 'bad'); Snd.error(); }
+    else if (e === 'caught') {
+      const sp = c.fish.sp, F = Pesca.FISH[sp];
+      S.fish[sp]++; S.stat.fish++; Snd.catchfish();
+      toast('🐟 ' + F.name + ' pescado! Vale ' + Pesca.sellPrice(S, sp) + ' ◎ — venda na caixa ou coma (F).', 'good');
+      parts.push({ k: 'catch', sx: c.bx, sy: c.by, sp, life: 0, max: .7 }); floatText(P.x, P.y - 100, '+1 ' + F.name, '#bfe9ff'); requestSave();
+    }
+  }
+  function fishUpdate(dt) {
+    if (castCd > 0) castCd -= dt;
+    if (!cast) return;
+    if (TOOLS[S.tool].id !== 'vara' || modalOpen || sleeping || Animals.isRiding() || Math.hypot(P.x - cast.ox, P.y - cast.oy) > 46) { cancelCast(); return; }      // trocar de ferramenta ou sair do lugar recolhe a linha
+    for (const e of Pesca.update(cast, dt, { S, lake, rnd: Math.random, activity: Pesca.activity(S) })) fishEvent(e);
+    if (cast && cast.phase === 'done') { cast = null; castCd = .35; }
+  }
+  // comer peixe: cada espécie devolve energia (a multiferramenta dá +25%); o peixe sai do cesto de pesca
+  function openEatFish() {
+    if (!S || modalOpen || sleeping) return;
+    currentModal = 'eatfish';
+    const rows = Pesca.FISH_KEYS.filter(k => S.fish[k] > 0).map(k => {
+      const F = Pesca.FISH[k], gain = Pesca.eatGain(S, k);
+      return `<div class="item"><img src="${Pesca.spriteUrl(k)}"><div class="txt"><b>${F.name} <small>(${S.fish[k]})</small></b><small>Recupera ${gain} de energia · ou vende por ${Pesca.sellPrice(S, k)} ◎</small></div>
+        <div class="btns"><button class="mb" data-a="eatfish" data-k="${k}" ${S.energy >= 100 ? 'disabled' : ''}>Comer</button></div></div>`;
+    }).join('');
+    setModal(`<h2>🍽 Comer peixe</h2><p>Energia: <b>${Math.ceil(S.energy)}/100</b>. O peixe é assado na hora. Também dá para vendê-lo na caixa de vendas.</p>
+      ${rows || '<p><small>Você não tem peixes. Compre uma vara no empório (aba Pesca) e pesque no lago.</small></p>'}
+      <div class="modalBtns"><button class="mb alt" data-a="close">Fechar</button></div>`);
+  }
+  // aba "Pesca" do empório: varas, carretéis, iscas e acessórios (o que cada um faz está na descrição; tudo vem de Pesca.GEAR)
+  function fishShopHtml() {
+    const fx = Pesca.fx(S); let html = '', group = '';
+    html += `<p>Pesque no lago (de preferência da doca): os peixes <b>vendem</b> na caixa de vendas ou <b>alimentam</b> você (F). Cesto de pesca: <b>${Pesca.fishCount(S)}/${fx.capacity}</b> · iscas: ${S.bait.cera} de cera, ${S.bait.viva} vivas.</p>`;
+    for (const g of Pesca.GEAR) {
+      if (g.group !== group) { group = g.group; html += `<h3>${group}</h3>`; }
+      const c = Pesca.canBuy(S, g.id), owned = g.kind === 'level' ? (S.up[g.key] | 0) >= g.lvl : g.kind === 'once' ? !!S.gear[g.id] : false;
+      const have = g.kind === 'bait' ? ' <small>(você tem ' + (S.bait[g.id] | 0) + '/' + fx.baitCap + ')</small>' : '';
+      const btn = owned ? '<small>✓ comprado</small>' : `<button class="mb" data-a="gear" data-k="${g.id}" ${c.ok ? '' : 'disabled'} title="${c.ok ? '' : c.why}">${g.cost} ◎</button>${!c.ok && c.why !== 'ouro insuficiente' ? '<small class="why">' + c.why + '</small>' : ''}`;
+      html += `<div class="item"><img src="${Pesca.spriteUrl(g.img)}"><div class="txt"><b>${g.name}${have}</b><small>${g.info}</small></div><div class="btns">${btn}</div></div>`;
+    }
+    return html;
+  }
 
   function useTool(tx, ty, fromMouse, auto) {
     if (act || modalOpen || paused) return;
     if (fromMouse) faceTo(tx, ty);
+    if (TOOLS[S.tool].id === 'vara' && !Animals.isRiding()) { if (!auto) { if (!fishPress()) fishStart(tx, ty); } return; }      // a vara: 1º aperto lança, o seguinte fisga (segurar o espaço não repete)
     let it = interactAt(tx, ty);
     const id = TOOLS[S.tool].id;
     if (it && it.type === 'cachorro' && toolCheck(tx, ty).ok) it = null;   // a ferramenta tem prioridade sobre o carinho (E ainda faz carinho)
@@ -1127,6 +1247,7 @@
   }
 
   function interact(tx, ty) {
+    if (cast && fishPress()) return;
     const it = interactAt(tx, ty);
     if (Animals.isRiding() && (!it || it.type === 'dismount' || it.type === 'cavalo')) { Animals.dismount(); Snd.pop(); toast('Você desmontou.'); return; }
     if (!it) return;
@@ -1222,8 +1343,9 @@
     for (const k of PROD_KEYS) { total += S.harvest[k] * prodSell(k); n += S.harvest[k]; }
     total += S.eggs * EGG_PRICE + S.stone * STONE_PRICE + S.wood * WOOD_PRICE + S.milk * MILK_PRICE + S.truffle * TRUFFLE_PRICE + S.meat * MEAT_PRICE;
     n += S.eggs + S.stone + S.wood + S.milk + S.truffle + S.meat;
+    total += Pesca.fishValue(S); n += Pesca.fishCount(S);
     if (!n) { toast('Nada para vender. Colha algo primeiro!', 'bad'); Snd.error(); return; }
-    PROD_KEYS.forEach(k => S.harvest[k] = 0); S.eggs = S.stone = S.wood = S.milk = S.truffle = S.meat = 0;
+    PROD_KEYS.forEach(k => S.harvest[k] = 0); for (const k of Pesca.FISH_KEYS) S.fish[k] = 0; S.eggs = S.stone = S.wood = S.milk = S.truffle = S.meat = 0;
     S.gold += total; S.earned += total; S.stat.sold += n;
     Snd.coin(); toast('Vendeu ' + n + ' itens por ' + fmt(total) + ' ◎', 'gold');
     const cx = (BIN.x + 1) * TS, cy = BIN.y * TS - 20;
@@ -1284,6 +1406,7 @@
     // ovos: 1ª postura da manhã (a 2ª vem ao meio-dia, em update)
     eggs.length = 0; layEggs(); S.laid = 1;
     // animais: ordenha e carne renovadas, trufas e tesouro do cachorro
+    cancelCast(); if (lake) lake.restock(Pesca.LAKE_TARGET);      // amanhece com o lago cheio de peixes
     Animals.resetMorning(); S.milked = []; S.meatDone = []; S.truffleList = [];
     for (const pg of Animals.pigs()) if (Math.random() < .75) {
       for (let tries = 0; tries < 10; tries++) {
@@ -1370,7 +1493,12 @@
       return `<div class="item"><img src="${img}"><div class="txt"><b>${name}</b><small>${cur}${max ? ' · nível máximo' : ' → ' + nextTxt}</small></div>
         <div class="btns">${max ? '' : `<button class="mb" data-a="up" data-k="${key}" ${S.gold < costs[lvl + 1] ? 'disabled' : ''}>${costs[lvl + 1]} ◎</button>`}</div></div>`;
     };
-    setModal(`<span class="money">◎ ${fmt(S.gold)}</span><h2>🛒 Empório</h2><p>Sementes, animais, comida e equipamento. Venda a colheita na caixa de vendas ao lado.</p>
+    const tabs = `<div class="shopTabs"><button class="mb${shopTab === 'farm' ? '' : ' alt'}" data-a="shoptab" data-k="farm">🌾 Fazenda</button><button class="mb${shopTab === 'pesca' ? '' : ' alt'}" data-a="shoptab" data-k="pesca">🎣 Pesca</button></div>`;
+    if (shopTab === 'pesca') {
+      setModal(`<span class="money">◎ ${fmt(S.gold)}</span><h2>🛒 Empório</h2>${tabs}${fishShopHtml()}<div class="modalBtns"><button class="mb alt" data-a="close">Fechar (Esc)</button></div>`);
+      return;
+    }
+    setModal(`<span class="money">◎ ${fmt(S.gold)}</span><h2>🛒 Empório</h2>${tabs}<p>Sementes, animais, comida e equipamento. Venda a colheita na caixa de vendas ao lado.</p>
       <h3>Sementes</h3>${seedRows}
       <h3>Árvores frutíferas <small style="text-transform:none;letter-spacing:0">(mudas · escolha com Q, plante em terra livre com a ferramenta 3)</small></h3>${treeRows}
       <h3>Animais do curral <small style="text-transform:none;letter-spacing:0">(a leste da fazenda)</small></h3>${animalRows}
@@ -1395,15 +1523,15 @@
     currentModal = 'menu';
     setModal(`<h2>☰ Pausa</h2>
       <div class="help"><b>Mover:</b> <kbd>W A S D</kbd> ou setas &nbsp; <b>Correr:</b> <kbd>Shift</kbd><br>
-      <b>Ferramentas:</b> <kbd>1</kbd> Forcado · <kbd>2</kbd> Regador · <kbd>3</kbd> Sementes · <kbd>4</kbd> Luvas · <kbd>5</kbd> Picareta · <kbd>6</kbd> Machado (ou roda do mouse)<br>
-      <b>Usar:</b> <kbd>Espaço</kbd> ou clique no terreno próximo &nbsp; <b>Interagir:</b> <kbd>E</kbd> &nbsp; <b>Trocar semente:</b> <kbd>Q</kbd> &nbsp; <b>Chamar o cachorro:</b> <kbd>C</kbd><br>
+      <b>Ferramentas:</b> <kbd>1</kbd> Forcado · <kbd>2</kbd> Regador · <kbd>3</kbd> Sementes · <kbd>4</kbd> Luvas · <kbd>5</kbd> Picareta · <kbd>6</kbd> Machado · <kbd>7</kbd> Vara de pesca (ou roda do mouse)<br>
+      <b>Usar:</b> <kbd>Espaço</kbd> ou clique no terreno próximo &nbsp; <b>Interagir:</b> <kbd>E</kbd> &nbsp; <b>Trocar semente:</b> <kbd>Q</kbd> &nbsp; <b>Chamar o cachorro:</b> <kbd>C</kbd> &nbsp; <b>Comer peixe:</b> <kbd>F</kbd><br>
       <b>Música:</b> <kbd>M</kbd> &nbsp; <b>Efeitos:</b> <kbd>N</kbd> &nbsp; <b>Pausa:</b> <kbd>Esc</kbd></div>
       ${durabilityText() ? `<div class="help" id="durLine">${durabilityText()}</div>` : ''}
       <h3>Como jogar</h3>
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
       ④ depois das 18:00, durma na porta da casa para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
       Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. As galinhas botam ovos 2× por dia (manhã e meio-dia) e os porcos dão carne 2× por dia. Dias com chuva regam tudo sozinhos!</div>
-      <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="switchslot">Trocar de jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb alt" data-a="export" title="Baixa o jogo como um arquivo .json (backup ou para levar a outro aparelho)">Exportar</button><button class="mb" data-a="close">Continuar</button></div>`);
+      <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="switchslot">Trocar de jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="eatfish_open">🍽 Comer peixe (F)</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb alt" data-a="export" title="Baixa o jogo como um arquivo .json (backup ou para levar a outro aparelho)">Exportar</button><button class="mb" data-a="close">Continuar</button></div>`);
   }
 
   function openCharPicker() {
@@ -1431,6 +1559,19 @@
     const a = b.dataset.a;
     if (a === 'close') closeModal();
     else if (a === 'sleep') { closeModal(); sleepSequence(false); }
+    else if (a === 'shoptab') { shopTab = b.dataset.k === 'pesca' ? 'pesca' : 'farm'; Snd.pop(); openShop(); }
+    else if (a === 'gear') {
+      const id = b.dataset.k, g = Pesca.GEAR_BY[id], r = Pesca.buy(S, id);
+      if (r.ok) { Snd.level(); toast('Comprou: ' + g.name + ' (−' + g.cost + ' ◎)' + (id === 'rod1' ? ' — selecione a vara (7) e pesque no lago!' : ''), 'good'); requestSave(); openShop(); } else { Snd.error(); toast('Não deu: ' + r.why, 'bad'); }
+    }
+    else if (a === 'eatfish_open') { closeModal(); openEatFish(); }
+    else if (a === 'eatfish') {
+      const k = b.dataset.k;
+      if (S.fish[k] > 0 && S.energy < 100) {
+        const gain = Math.min(Pesca.eatGain(S, k), 100 - S.energy); S.fish[k]--; S.energy += gain; Snd.buy();
+        toast('Você comeu um(a) ' + Pesca.FISH[k].name.toLowerCase() + ' assado! +' + Math.round(gain) + ' de energia', 'good'); requestSave(); openEatFish();
+      } else Snd.error();
+    }
     else if (a === 'buy') {
       const k = b.dataset.k, n = +b.dataset.n, c = CROPS[k]; const cost = c.seed * n;
       if (S.gold >= cost) { S.gold -= cost; S.seeds[k] += n; Snd.buy(); if (S.seeds[k] === n) { S.selSeed = k; } toast('Comprou ' + n + (n > 1 ? ' sementes' : ' semente') + ' de ' + c.name.toLowerCase() + ' (−' + cost + ' ◎)', 'good'); requestSave(); openShop(); } else Snd.error();
@@ -1504,14 +1645,14 @@
     for (const k of Object.keys(hudCache)) if (k.startsWith('slot')) delete hudCache[k];
     TOOLS.forEach((t, i) => {
       const d = document.createElement('div'); d.className = 'slot'; d.dataset.i = i;
-      const src = t.id === 'regador' ? ICONS.can : t.id === 'machado' ? ICONS.axe : t.id === 'sementes' ? null : charSrc(t.img);
+      const src = t.id === 'regador' ? ICONS.can : t.id === 'machado' ? ICONS.axe : t.id === 'sementes' ? null : t.id === 'vara' ? Pesca.spriteUrl('vara_spinning') : charSrc(t.img);
       d.innerHTML = `<span class="k">${i + 1}</span><img src="${src || ICONS[S.selSeed + '_seed']}" id="slotimg${i}"><span class="n" id="slotn${i}"></span>`;
       d.addEventListener('mousedown', e => { e.preventDefault(); selectTool(i); });
       hb.appendChild(d);
     });
   }
   function selectTool(i) {
-    if (i === S.tool) return; S.tool = i; Snd.pop(); updateHud(true);
+    if (i === S.tool) return; cancelCast(); S.tool = i; Snd.pop(); updateHud(true);
   }
   function cycleSeed(dirn = 1) {
     const avail = PROD_KEYS.filter(k => S.seeds[k] > 0);
@@ -1540,6 +1681,7 @@
     const si = $('slotimg2'); if (si) { const src = S.seeds[S.selSeed] > 0 || true ? ICONS[S.selSeed + '_seed'] : ''; if (si.getAttribute('src') !== src) si.setAttribute('src', src); }
     setText('slotn2', S.seeds[S.selSeed]);
     setText('slotn1', ''); setText('slotn3', ''); setText('slotn4', '');
+    { const fx = Pesca.fx(S), nb = S.bait.cera + S.bait.viva; setText('slotn6', fx.canFish ? (nb || '') : '🔒'); document.querySelectorAll('.slot')[6].classList.toggle('locked', !fx.canFish); }
     setText('toolName', TOOLS[S.tool].name + (S.tool === 2 ? ' · ' + (CROPS[S.selSeed] ? CROPS[S.selSeed].name : 'Muda de ' + TREE_SP[S.selSeed].name.toLowerCase()) : ''));
     // cesto
     const items = [];
@@ -1548,6 +1690,7 @@
     if (S.milk) items.push([ICONS.milk, 'Leite', S.milk]);
     if (S.meat) items.push([ICONS.meat, 'Carne', S.meat]);
     if (S.truffle) items.push([ICONS.truffle, 'Trufas', S.truffle]);
+    for (const k of Pesca.FISH_KEYS) if (S.fish[k]) items.push([Pesca.spriteUrl(k), Pesca.FISH[k].name, S.fish[k]]);
     if (S.stone) items.push([ICONS.stone, 'Pedras', S.stone]);
     if (S.wood) items.push([ICONS.wood, 'Madeira', S.wood]);
     const key = basketUsed() + '|' + basketCap() + '|' + items.map(i => i[1] + i[2]).join(',');
@@ -1582,6 +1725,8 @@
     if (st.sleep < 1) return 'Depois das <b>18:00</b>, vá até a porta da casa (a porta vermelha do pórtico, no topo) e pressione <b>E</b> para <b>dormir</b> — as plantas regadas crescem de noite.';
     if (st.harvest < 1) return 'Quando a planta estiver madura, use as <b>Luvas</b> (<b>4</b>) ou <b>E</b> para colher.';
     if (st.sold < 1) return 'Venda a colheita na <b>Caixa de Vendas</b> com <b>E</b>. Depois compre mais sementes na loja!';
+    if (S.up.rod >= 1 && st.fish < 1) return 'Pescar: selecione a <b>vara</b> (<b>7</b>), fique de frente para o lago (a <b>doca</b> a oeste ajuda) e use <b>ESPAÇO</b>. Quando a boia afundar e aparecer o <b>!</b>, aperte de novo!';
+    if (S.up.rod < 1 && st.fish < 1 && S.earned >= 200) return 'Novidade: o lago tem <b>peixes</b>! Compre uma <b>vara</b> no empório (aba <b>Pesca</b>) — peixe vende bem e ainda recupera energia.';
     return '';
   }
 
@@ -1600,7 +1745,8 @@
     if (modalOpen) { if (k === 'e' && currentModal === 'shop') closeModal(); return; }
     if (keys[k]) { /* repetição */ } else keys[k] = true;
     if (e.repeat && k !== ' ') return;
-    if (k >= '1' && k <= '6') selectTool(+k - 1);
+    if (k >= '1' && k <= '7') selectTool(+k - 1);
+    else if (k === 'f') openEatFish();
     else if (k === 'q' || k === 'tab') cycleSeed(e.shiftKey ? -1 : 1);
     else if (k === 'c') callDog();
     else if (k === 'm') toggleMusic();
@@ -1722,6 +1868,8 @@
       }
       updateChickens(dt);
       Animals.update(dt, S);
+      if (lake) lake.update(dt, Pesca.activity(S));
+      fishUpdate(dt);
       chirpT -= dt;
       if (chirpT <= 0) { chirpT = rnd(4, 11); if (S.min < 18 * 60 && !S.rain && !Snd.muted) Snd.chirp(); }
       if (time - lastSave > 25) { lastSave = time; save(); }
@@ -1730,7 +1878,7 @@
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i]; p.life += dt;
       if (p.life >= p.max) { parts.splice(i, 1); continue; }
-      if (p.k === 'fly') continue;
+      if (p.k === 'fly' || p.k === 'catch') continue;
       p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt;
     }
     // chuva
@@ -1882,6 +2030,17 @@
     const hop = P.hop > 0 ? Math.sin(P.hop / .3 * Math.PI) * 14 : 0;
     g.drawImage(img, P.x + ox - w / 2, P.y - bob + oy - hop - h + 6, w, h);
   }
+  // pescando: vara na mão, linha e boia; quando o peixe morde aparece o balão "!" sobre a cabeça (é o sinal para apertar)
+  function drawCast() {
+    const dir = P.dir, hand = [P.x + (dir === 2 ? -16 : dir === 3 ? 16 : dir === 0 ? 14 : -14), P.y - (dir === 1 ? 52 : 44)];
+    Pesca.drawLine(g, cast, hand, PIMGS, time);
+    if (cast.phase === 'bite') {
+      const by = P.y - 124 + Math.sin(time * 18) * 2.5;
+      g.save(); g.fillStyle = 'rgba(255,255,255,.96)'; g.strokeStyle = '#b3261e'; g.lineWidth = 2.5; g.beginPath(); g.arc(P.x, by, 16, 0, 7); g.fill(); g.stroke();
+      g.beginPath(); g.moveTo(P.x - 5, by + 14); g.lineTo(P.x, by + 22); g.lineTo(P.x + 5, by + 14); g.fill();
+      g.fillStyle = '#b3261e'; g.font = 'bold 22px "Trebuchet MS", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('!', P.x, by + 1); g.restore();
+    }
+  }
   function drawActTool(behind) {
     if (!act) return;
     const isBehind = P.dir === 1; if (isBehind !== behind) return;
@@ -1918,8 +2077,8 @@
   }
 
   function drawIndicator(tx, ty) {
-    const chk = toolCheck(tx, ty), it = interactAt(tx, ty);
-    const good = chk.ok || (it && it.type !== 'coop');
+    const chk = toolCheck(tx, ty), it = interactAt(tx, ty), fishing = TOOLS[S.tool].id === 'vara' && isWater(tx, ty);      // com a vara, a água é lugar de pescar (não de encher o regador)
+    const good = fishing ? Pesca.fx(S).canFish : (chk.ok || (it && it.type !== 'coop'));
     const x = tx * TS, y = ty * TS, pulse = .75 + Math.sin(time * 6) * .25;
     g.save();
     g.lineWidth = 3; g.strokeStyle = good ? `rgba(255,240,150,${pulse})` : 'rgba(255,255,255,.35)';
@@ -1929,7 +2088,8 @@
     [[x + 3, y + 3, 1, 1], [x + TS - 3, y + 3, -1, 1], [x + 3, y + TS - 3, 1, -1], [x + TS - 3, y + TS - 3, -1, -1]].forEach(([cx, cy, sx, sy]) => { g.moveTo(cx, cy + sy * L); g.lineTo(cx, cy); g.lineTo(cx + sx * L, cy); });
     g.stroke(); g.restore();
     hint.text = it && it.type !== 'crop' ? it.label : (it && it.type === 'crop' ? it.label : (chk.msg && !chk.ok ? '' : ''));
-    hint.x = x + TS / 2; hint.y = y - 6;
+    if (fishing) hint.text = cast ? (cast.phase === 'bite' ? 'ESPAÇO — Fisgar agora!' : cast.phase === 'wait' ? 'Esperando o peixe… (ESPAÇO recolhe)' : '') : (Pesca.fx(S).canFish ? 'ESPAÇO — Lançar a vara' : 'Compre uma vara no empório (aba Pesca)');
+    hint.x = x + TS / 2; hint.y = fishing ? y + TS + 30 : y - 6;      // pescando, o aviso vai para BAIXO do alvo: em cima ele escondia a vara
   }
 
   function drawHint() {
@@ -1957,6 +2117,7 @@
     g.fillStyle = 'rgba(255,255,255,.13)';
     for (let i = 0; i < 6; i++) { const px = cx + Math.sin(time * .5 + i * 1.9) * rx * .7, py = cy + Math.cos(time * .4 + i * 2.7) * ry * .6; g.beginPath(); g.ellipse(px, py, 22, 3, 0, 0, 7); g.fill(); }
     g.restore();
+    if (lake) Pesca.drawFish(g, lake, PIMGS, Pesca.fx(S).seeFish);      // os peixes nadando (sem os óculos polarizados: silhuetas escuras)
     // vitórias-régias
     const lp = [[-.55, -.2, 15], [.35, .25, 17], [-.1, .45, 12], [.6, -.35, 13]];
     for (const [ox, oy, r] of lp) {
@@ -1969,6 +2130,13 @@
     g.restore();
   }
 
+  // DOCA (assets/pesca/doca.png): a arte é uma plataforma; duas lado a lado formam o píer de 4 tiles (x=32 em terra, 33-35 sobre a água). As ESTACAS vão na lista ordenada (drawBuildings).
+  function drawDock() {
+    const dk = PIMGS.doca; if (!dk || !dk.width) return;
+    const w = 136, h = w * dk.height / dk.width, y = DOCK.y * TS + TS - h * .66;
+    for (let i = 0; i < 2; i++) g.drawImage(dk, DOCK.x * TS - 4 + i * 124, y, w, h);
+    g.fillStyle = 'rgba(0,0,0,.18)'; g.fillRect((DOCK.x + 1) * TS, (DOCK.y + 1) * TS - 4, (DOCK.w - 1) * TS, 5);            // sombra na água sob o fim das tábuas
+  }
   function drawSoilLayer(x0, y0, x1, y1) {
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
       const s = S.soil[idx(x, y)]; if (!s) continue;
@@ -1991,6 +2159,11 @@
 
   function drawBuildings(list, x0, y0, x1, y1) {
     const vis = (r) => r.x <= x1 + 1 && r.x + r.w >= x0 - 1 && r.y <= y1 + 1 && r.y + r.h >= y0 - 1;
+    if (PIMGS.estaca && PIMGS.estaca.width && vis({ x: DOCK.x, y: DOCK.y - 1, w: DOCK.w, h: 3 })) {        // estacas da doca: 2 no fim (lado da água) e 1 no meio
+      const e = PIMGS.estaca, eh = 62, ew = eh * e.width / e.height;
+      for (const [px, py] of [[(DOCK.x + DOCK.w) * TS - 6, DOCK.y * TS + 12], [(DOCK.x + DOCK.w) * TS - 6, (DOCK.y + 1) * TS + 8], [(DOCK.x + 2) * TS, (DOCK.y + 1) * TS + 8]])
+        list.push({ y: py, d: () => { g.drawImage(e, px - ew / 2, py - eh + 6, ew, eh); } });
+    }
     if (vis(HOUSE)) list.push({ y: (HOUSE.y + HOUSE.h) * TS - 10, d: () => g.drawImage(IMGS.casa, HOUSE_X, HOUSE_Y, HOUSE_ART.w, HOUSE_ART.h) });
     if (vis(STALL)) list.push({ y: (STALL.y + STALL.h) * TS - 8, d: () => g.drawImage(Art.stall, STALL.x * TS, (STALL.y + STALL.h) * TS - 150 + 6) });
     if (vis(SIGN)) list.push({ y: (SIGN.y + 1) * TS - 6, d: () => g.drawImage(Art.sign, SIGN.x * TS, (SIGN.y + 1) * TS - 104 + 8) });
@@ -2011,7 +2184,7 @@
     const sx = x0 * TS, sy = y0 * TS, sw = (x1 - x0 + 1) * TS, sh = (y1 - y0 + 1) * TS;
     g.drawImage(groundCanvas, sx, sy, sw, sh, sx, sy, sw, sh);
     drawSoilLayer(x0, y0, x1, y1);
-    drawPond();
+    drawPond(); drawDock();
     { // sombras de nuvens
       const a = .3 * (1 - nightness()) * (S.rain ? .3 : 1);
       if (a > .01 && cloudSprites) {
@@ -2086,6 +2259,7 @@
         if (Animals.isRiding()) { Animals.drawMounted(g, P, IMGS, S); return; }
         Art.shadow(g, P.x, P.y - 1, 17, 6, .34);
         drawActTool(true); drawPlayerSprite(); drawActTool(false);
+        if (cast) drawCast();
       }
     });
     list.sort((a, b) => a.y - b.y);
@@ -2102,6 +2276,9 @@
         const tx = P.x, ty = P.y - 50, e = t * t * (3 - 2 * t);
         const x = lerp(p.sx, tx, e) + Math.sin(e * Math.PI) * p.bend, y = lerp(p.sy, ty, e) - Math.sin(e * Math.PI) * 30;
         g.save(); g.globalAlpha = 1 - t * .6; const s = 1 - t * .5; g.translate(x, y); g.scale(s, s); g.drawImage(p.img, -14, -14, 28, 28); g.restore();
+      } else if (p.k === 'catch') {                          // o peixe pescado pula da água até o personagem
+        const e = t * t * (3 - 2 * t), tx = P.x, ty = P.y - 60, x = lerp(p.sx, tx, e), y = lerp(p.sy, ty, e) - Math.sin(e * Math.PI) * 46, im = PIMGS[p.sp];
+        if (im && im.width) { const w = Pesca.FISH[p.sp].len * 1.25, h = w * im.height / im.width; g.save(); g.globalAlpha = 1 - t * t; g.translate(x, y); g.rotate(Math.sin(t * 14) * .5); g.drawImage(im, -w / 2, -h / 2, w, h); g.restore(); }
       } else if (p.k === 'heart') {
         g.save(); g.globalAlpha = 1 - t * t; g.translate(p.x + Math.sin(p.life * 6) * 3, p.y); const hs = p.r / 8 * (1 + Math.sin(p.life * 12) * .08); g.scale(hs, hs); g.fillStyle = p.c;
         g.beginPath(); g.moveTo(0, 3); g.bezierCurveTo(-9, -4, -5, -11, 0, -6); g.bezierCurveTo(5, -11, 9, -4, 0, 3); g.fill(); g.restore();
@@ -2253,6 +2430,7 @@
     applyNames(S.names);
     setCharacter(S.char);
     buildStatic();
+    initLake();
     loadObs(S.obsInit ? S.obs : genObstacles()); S.obsInit = true;
     // limpar obstáculos sobre solo/ cultivo inválido
     for (const o of [...obs]) if (solid[idx(o.x, o.y)] || (o.type === 'bush' && (Animals.inArea(o.x, o.y, 0) || inRect(COOP, o.x, o.y)))) removeObs(o);   // (também limpa mato que saves antigos deixaram no curral)
@@ -2280,7 +2458,7 @@
       SaveManager.session.startNew(prev); save();
     }
     if (loadIt) openMenu();      // Continuar: o jogo começa PAUSADO (menu aberto): nenhum tempo de jogo se perde e o clique serve de gesto para o áudio
-    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKERS, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
+    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKERS, PIMGS, DOCK, POND, get lake() { return lake; }, get cast() { return cast; }, fishStart, fishPress, openEatFish, openShop, deepWater, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
   }
 
   async function boot() {
@@ -2319,7 +2497,9 @@
         jobs.push(load(C.folder + '/' + C.front, ci, 'front_walk'));
       }
       jobs.push(...Animals.load(load));
+      for (const n of Pesca.SPRITES) jobs.push(load(Pesca.spriteUrl(n), PIMGS, n));
       await Promise.all(jobs);
+      Pesca.makeTints(PIMGS);
       Art.init(); setCharacter('fazendeiro'); makeCloudSprites();
       $('btnMusic').textContent = Snd.musicOn ? '🎵' : '🔕'; $('btnMute').textContent = Snd.muted ? '🔇' : '🔊';
       status.classList.add('hidden');

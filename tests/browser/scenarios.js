@@ -288,6 +288,85 @@
     },
   };
 
+  /* PESCA no lago: sprites carregados, peixes DE VERDADE na água, doca andável e alcançável, margem sem árvores, 7ª ferramenta trancada até comprar a vara, loja com a aba Pesca,
+     lançar → esperar → fisgar → pescar (energia e isca gastas, peixe sai do lago, entra no cesto/HUD), recolher cedo, trocar de ferramenta recolhe, comer (energia), vender (balança), novo dia repõe os peixes */
+  S_['pesca-lago'] = {
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); $('btnNew').click(); await wait(200); document.querySelectorAll('.charCard')[0].click(); const G = await gameReady(), S = G.S, L = G.lake, D = G.DOCK;
+      ok('todos os sprites de pesca carregaram (' + Pesca.SPRITES.length + ')', Pesca.SPRITES.every(n => G.PIMGS[n] && G.PIMGS[n].width > 8), Pesca.SPRITES.filter(n => !(G.PIMGS[n] && G.PIMGS[n].width > 8)).join(','));
+      ok('o lago tem os peixes (' + Pesca.LAKE_TARGET + ') e todos estão BEM DENTRO da água', L && L.fish.length === Pesca.LAKE_TARGET && L.fish.every(f => G.deepWater(f.x, f.y)));
+      ok('as 4 espécies existem no jogo e cada peixe nasce de uma delas', Pesca.FISH_KEYS.length === 4 && L.fish.every(f => Pesca.FISH[f.sp]));
+      // os peixes são DESENHADOS a cada quadro; sem os óculos polarizados aparecem como silhueta (see=false), com eles coloridos (see=true)
+      { const orig = Pesca.drawFish, seen = []; Pesca.drawFish = (g, lake, imgs, see) => { seen.push(see); return orig(g, lake, imgs, see); };
+        G.P.x = (G.DOCK.x - 2) * 64; G.P.y = (G.DOCK.y + .5) * 64; steps(G, 6); const semOculos = seen.slice(); S.gear.oculos = 1; seen.length = 0; steps(G, 6); const comOculos = seen.slice(); S.gear.oculos = 0; Pesca.drawFish = orig;
+        ok('os peixes são desenhados a cada quadro: silhueta sem óculos, coloridos com óculos polarizados', semOculos.length >= 6 && semOculos.every(v => v === false) && comOculos.length >= 6 && comOculos.every(v => v === true), JSON.stringify([semOculos.length, comOculos.length])); }
+      const dockTiles = []; for (let x = D.x; x < D.x + D.w; x++) for (let y = D.y; y < D.y + D.h; y++) dockTiles.push([x, y]);
+      ok('a doca (' + D.w + ' tiles) é andável: sem água e sem bloqueio', dockTiles.every(([x, y]) => !G.blocked(x, y)), JSON.stringify(dockTiles.filter(([x, y]) => G.blocked(x, y))));
+      ok('o lago continua sólido ao lado da doca (leste) e nas margens norte/sul dela', G.blocked(D.x + D.w, D.y) && G.blocked(D.x + 1, D.y - 1) && G.blocked(D.x + 1, D.y + 1), '');
+      const reach = (() => { const seen = new Set(['8,6']), q = [[8, 6]]; while (q.length) { const [x, y] = q.shift(); for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy, k = nx + ',' + ny; if (nx < 0 || ny < 0 || nx >= G.MW || ny >= G.MH || seen.has(k) || G.blocked(nx, ny)) continue; seen.add(k); q.push([nx, ny]); } } return seen; })();
+      ok('dá para chegar à ponta da doca a pé a partir do ponto de partida', reach.has((D.x + D.w - 1) + ',' + D.y), 'alcançáveis: ' + reach.size);
+      const bad = []; for (let x = D.x - 4; x < D.x; x++) for (let y = D.y - 2; y <= D.y + 2; y++) if (G.blocked(x, y)) bad.push(x + ',' + y);      // (o galinheiro, em x=26-27, é uma estrutura sólida de verdade: fora da checagem)
+      ok('a entrada da doca (4 tiles a oeste, ±2 de altura) não tem árvore, pedra nem mato', bad.length === 0, bad.join(' '));
+      const slot = document.querySelectorAll('.slot')[6]; ok('a 7ª ferramenta (vara) existe na barra e está trancada (sem a vara)', !!slot && slot.classList.contains('locked') && /🔒/.test(slot.innerText), slot && slot.className);
+      G.P.x = (D.x + D.w - .5) * 64; G.P.y = (D.y + .55) * 64; G.P.dir = 3; steps(G, 8); slot.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); ok('clicar no slot 7 seleciona a vara', S.tool === 6, S.tool);
+      clearToasts(); G.fishStart(D.x + D.w, D.y); ok('sem vara: nada é lançado e o aviso manda comprar no empório', !G.cast && toasts().some(t => /Compre uma vara/.test(t)), toasts().join('|'));
+      S.gold = 5000; G.openShop(); ok('a loja tem as abas Fazenda e Pesca', !!document.querySelector('[data-a=shoptab][data-k=pesca]') && !!document.querySelector('[data-a=shoptab][data-k=farm]'));
+      document.querySelector('[data-a=shoptab][data-k=pesca]').click(); await wait(50);
+      const rows = [...document.querySelectorAll('#modalBox .item')]; ok('a aba Pesca lista TODOS os ' + Pesca.GEAR.length + ' equipamentos, cada um com sprite e nome', rows.length === Pesca.GEAR.length && Pesca.GEAR.every(g => $('modalBox').innerHTML.includes(Pesca.spriteUrl(g.img)) && $('modalBox').innerText.includes(g.name)), rows.length);
+      ok('a vara de fly e o carretel baitcast ficam travados até comprar o nível anterior', document.querySelector('[data-a=gear][data-k=rod2]').disabled && document.querySelector('[data-a=gear][data-k=reel2]').disabled);
+      const g0 = S.gold; document.querySelector('[data-a=gear][data-k=rod1]').click(); await wait(50);
+      ok('comprar a vara spinning: nível 1, cobra 150 ◎, slot destrancado', S.up.rod === 1 && S.gold === g0 - 150 && !document.querySelectorAll('.slot')[6].classList.contains('locked') && !document.querySelector('[data-a=gear][data-k=rod1]'), S.up.rod + ' ' + (g0 - S.gold));
+      ok('depois da vara, a vara de fly libera', !document.querySelector('[data-a=gear][data-k=rod2]').disabled);
+      document.querySelector('[data-a=gear][data-k=viva]').click(); await wait(30); ok('comprar isca viva: pacote de 5 (cobra 45)', S.bait.viva === 5 && S.gold === g0 - 150 - 45, S.bait.viva);
+      document.querySelector('[data-a=shoptab][data-k=farm]').click(); await wait(30); ok('voltar à aba Fazenda mostra as sementes', /Sementes/.test($('modalBox').innerText)); G.closeModal();
+      // pescar: uma perca (nunca se solta) perto da boia; os outros peixes longe
+      const park = keep => { for (const f of L.fish) if (f !== keep) { f.x = 36 * 64; f.y = 12.6 * 64; f.mode = 'wander'; } };      // (36; 12,6) fica a ~5,8 tiles da boia (a boia cai perto de x=41): bem fora do alcance de 3,2 tiles      // afasta os OUTROS peixes (senão voltam a nadar para perto da boia e a espécie sorteada varia: teste instável)
+      S.tool = 6; G.P.x = (D.x + D.w - .5) * 64; G.P.y = (D.y + .55) * 64; G.P.dir = 3; steps(G, 6);
+      // a boia cai perto de x=41 (alcance da doca); o peixe testado fica ~1,6 tile dela, dentro do alcance de 3,2
+      const fish = L.add('perca'); park(fish); fish.x = (D.x + D.w + 3.2) * 64; fish.y = (D.y + .5) * 64;
+      const n0 = L.fish.length, e0 = S.energy, b0 = S.bait.viva; clearToasts(); G.fishStart(D.x + D.w, D.y);
+      ok('lançar: a linha entra na água, gasta 1,2 de energia e 1 isca viva', !!G.cast && Math.abs(e0 - S.energy - 1.2) < .01 && S.bait.viva === b0 - 1, G.cast && G.cast.phase + ' ' + (e0 - S.energy) + ' ' + S.bait.viva);
+      ok('a boia caiu na ÁGUA, para além da margem (a doca alcança mais)', G.deepWater(G.cast.bx, G.cast.by) && G.cast.bx > (D.x + D.w) * 64, G.cast.bx);
+      let phase = ''; for (let i = 0; i < 400 && G.cast; i++) { steps(G, 1, .05); phase = G.cast ? G.cast.phase : 'none'; if (phase === 'bite') break; }
+      ok('o peixe nada até a isca e MORDE (a boia afunda)', phase === 'bite', phase);
+      ok('fisgar (espaço): vira a fase de recolher', G.fishPress() === true && G.cast.phase === 'fight', G.cast && G.cast.phase);
+      for (let i = 0; i < 60 && G.cast; i++) steps(G, 1, .05);
+      steps(G, 10, .05);      // o HUD (cesto) atualiza no quadro seguinte à captura
+      ok('pescou: 1 perca no cesto de pesca, estatística e HUD; o peixe SAIU do lago; a linha foi recolhida', S.fish.perca === 1 && S.stat.fish === 1 && L.fish.length === n0 - 1 && !G.cast && /Perca-sol/.test($('bag').innerText) && toasts().some(t => /Perca-sol pescado/.test(t)), JSON.stringify(S.fish) + ' ' + L.fish.length + '/' + n0 + ' ' + toasts().join('|'));
+      steps(G, 12); const f3 = L.add('perca'); f3.x = (D.x + D.w + 3.2) * 64; f3.y = (D.y + .5) * 64; park(f3); G.fishStart(D.x + D.w, D.y); for (let i = 0; i < 400 && G.cast && G.cast.phase !== 'bite'; i++) steps(G, 1, .05);
+      G.interact(D.x + D.w, D.y); ok('a tecla E também fisga (com a linha na água, E não "enche o regador")', !!G.cast && G.cast.phase === 'fight', G.cast && G.cast.phase);
+      for (let i = 0; i < 60 && G.cast; i++) steps(G, 1, .05); ok('...e o segundo peixe entra no cesto', S.fish.perca === 2 && S.stat.fish === 2, JSON.stringify(S.fish));
+      steps(G, 12); const f2 = L.add('perca'); f2.x = (D.x + D.w + 3.2) * 64; f2.y = (D.y + .5) * 64; park(f2); G.fishStart(D.x + D.w, D.y); steps(G, 14, .05);
+      ok('apertar cedo demais só recolhe a linha: sem peixe e sem erro', G.cast && G.cast.phase === 'wait' && G.fishPress() && !G.cast && S.fish.perca === 2);
+      steps(G, 12); G.fishStart(D.x + D.w, D.y); steps(G, 4, .05); const hadCast = !!G.cast; document.querySelectorAll('.slot')[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      ok('trocar de ferramenta recolhe a linha (e solta o peixe atraído)', hadCast && !G.cast && L.fish.every(f => f.mode !== 'attract'), S.tool);
+      S.tool = 6; steps(G, 12); G.fishStart(D.x + D.w, D.y); const lancou = !!G.cast; G.P.x -= 80; steps(G, 3);
+      ok('andar para longe do lugar em que lançou recolhe a linha', lancou && !G.cast);
+      S.energy = 40; S.fish.perca = 2; S.fish.achiga = 1; G.openEatFish(); ok('"Comer peixe" lista os peixes do cesto com a energia de cada um', /Perca-sol/.test($('modalBox').innerText) && /Achigã/.test($('modalBox').innerText) && /Recupera 12/.test($('modalBox').innerText) && /Recupera 32/.test($('modalBox').innerText), $('modalBox').innerText.slice(0, 120));
+      document.querySelector('[data-a=eatfish][data-k=perca]').click(); await wait(30); ok('comer uma perca: +12 de energia e o peixe sai do cesto', S.energy === 52 && S.fish.perca === 1, S.energy + ' ' + S.fish.perca);
+      S.energy = 90; G.closeModal(); G.openEatFish(); document.querySelector('[data-a=eatfish][data-k=achiga]').click(); await wait(30); ok('o ganho de energia nunca passa de 100 (90 + 32 → 100)', S.energy === 100 && S.fish.achiga === 0, S.energy); G.closeModal();
+      S.fish.perca = 3; S.fish.bagre = 1; S.gear.balanca = 1; const g1 = S.gold; G.sellAll();
+      ok('vender na caixa: peixes entram na conta com +20% da balança (3×12 + 1×31)', S.gold - g1 === 3 * 12 + 31 && Pesca.fishCount(S) === 0, (S.gold - g1) + ' ' + JSON.stringify(S.fish));
+      L.fish.length = 0; G.endDay(false); ok('um novo dia repõe o lago até o alvo', L.fish.length === Pesca.LAKE_TARGET, L.fish.length);
+      S.fish.perca = Pesca.fx(S).capacity; clearToasts(); S.tool = 6; G.P.x = (D.x + D.w - .5) * 64; G.P.y = (D.y + .55) * 64; G.P.dir = 3; steps(G, 6); G.fishStart(D.x + D.w, D.y);
+      ok('cesto de pesca cheio: não lança e avisa', !G.cast && toasts().some(t => /Cesto de pesca cheio/.test(t)), toasts().join('|'));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  /* save: o estado da pesca vai e volta; save HOSTIL não cria peixes demais nem quebra */
+  S_['pesca-save'] = {
+    seed() { T.reset(); const st = T.fixtureState('save_v1_atual'); Object.assign(st, { fish: { perca: 1e9, achiga: -4, bagre: 'x', crappie: 3.9, fantasma: 7 }, gear: { oculos: 5, popper: 'sim', inventado: 1 }, bait: { cera: 5000, viva: null }, up: Object.assign({}, st.up, { rod: 99, reel: -2 }) }); st.stat = Object.assign({}, st.stat, { fish: 'muitos' }); T.setMainState(st); },
+    async run() {
+      await bootReady(); $('btnContinue').click(); const G = await gameReady(), S = G.S;
+      ok('save hostil: peixes limitados (999 máx., sem negativos nem texto), chaves desconhecidas somem', S.fish.perca === 999 && S.fish.achiga === 0 && S.fish.bagre === 0 && S.fish.crappie === 3 && !('fantasma' in S.fish), JSON.stringify(S.fish));
+      ok('save hostil: acessórios 0/1, iscas ≤ 99, vara ≤ 2, carretel ≥ 0, estatística numérica', S.gear.oculos === 1 && S.gear.popper === 0 && !('inventado' in S.gear) && S.bait.cera === 99 && S.bait.viva === 0 && S.up.rod === 2 && S.up.reel === 0 && S.stat.fish === 0, JSON.stringify([S.gear, S.bait, S.up, S.stat.fish]));
+      ok('o jogo não quebrou com o save hostil (sem NaN, sem erro)', !hasNaN(S) && !window.__errs.length, hasNaN(S) + ' ' + window.__errs.join('|'));
+      S.fish = { perca: 2, crappie: 0, bagre: 1, achiga: 0 }; S.gear.chapeu = 1; S.up.rod = 2; S.up.reel = 1; S.bait.cera = 7; S.stat.fish = 5; const r = G.save();
+      const back = T.mainState(); ok('salvar grava peixes, acessórios, iscas, vara e carretel', r.ok && back.fish.perca === 2 && back.fish.bagre === 1 && back.gear.chapeu === 1 && back.up.rod === 2 && back.up.reel === 1 && back.bait.cera === 7 && back.stat.fish === 5, JSON.stringify([back.fish, back.gear.chapeu, back.up, back.bait]));
+    },
+  };
+
   /* Os DOIS personagens com sprite sheet (walk_sheet.png: 5 quadros x 4 direções): a sheet carrega e é fatiada em 20 quadros com pés na base; o chapéu aparece em todos os quadros
      do laço (a fazendeira de costas ganhou o chapéu por composição; o quadro sem chapéu do fazendeiro fica fora); o ciclo percorre o `loop` na ordem; parado usa o repouso; o cavaleiro,
      o retrato e as ferramentas carregam; trocar de personagem restaura as imagens certas */
@@ -753,7 +832,7 @@
     s.tool = 99; s.goal = -1; s.selSeed = 'zzz'; s.energy = 'x'; s.water = 'x'; s.min = -50; s.px = 'abc'; s.dir = 77; s.laid = 'x'; s.rev = 'x';
     s.owned = { vaca: 4000, porco: 4000, cavalo: 4000 }; s.seeds.cenoura = -5; s.up.basket = 99; s.stat.till = -3; s.char = 'ninguem';
   }, (G, S) => {
-    ok('tool dentro de 0..5 e goal dentro de 0..4', S.tool >= 0 && S.tool <= 5 && S.goal >= 0 && S.goal <= 4, S.tool + '/' + S.goal);
+    ok('tool dentro de 0..6 (7 ferramentas, com a vara) e goal dentro de 0..4', S.tool >= 0 && S.tool <= 6 && S.goal >= 0 && S.goal <= 4, S.tool + '/' + S.goal);
     ok('selSeed e char válidos', S.selSeed === 'cenoura' && S.char === 'fazendeiro', S.selSeed + '/' + S.char);
     ok('energia e água numéricas e dentro da faixa', S.energy === 100 && Number.isFinite(S.water) && S.water >= 0 && S.water <= 50, S.energy + '/' + S.water);
     ok('relógio dentro do dia (06:00..24:00)', S.min >= 360 && S.min <= 1440, S.min);

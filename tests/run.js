@@ -25,6 +25,7 @@ const SCENARIOS = [
   'titulo-velho-apagado', 'titulo-velho-corrompido',                                // revisão da 1c (N5): Continuar com o título desatualizado não inicia jogo novo em silêncio
   'export-titulo', 'export-pausa', 'importar-invalido', 'importar-slots', 'importar-sem-espaco', 'e2e-exporta-importa',     // Fase 2a: exportar/importar arquivo (E2E: exportar → limpar tudo → recarregar → importar → idêntico)
   'indicador-salvamento', 'storage-aviso-boot', 'storage-cheio-aviso', 'persist-concedido', 'persist-negado', 'persist-sem-api', 'backup-metas',     // Fase 2b: indicador/faixa, storage indisponível, persist(), backup nas metas
+  'pesca-lago', 'pesca-save',                                                        // Pesca: lago com peixes, doca, 7ª ferramenta, loja, lançar/fisgar/pescar, comer, vender, save hostil
   'personagens-sprites',                                                              // Fase de arte: fazendeiro e fazendeira com sprite sheet (5 quadros x 4 direções)
   'casa-principal',                                                                  // Fase de arte: casa de tijolos no lugar do celeiro (desenho, colisão, porta, luzes)
   'cavalo-sprites',                                                                  // Fase de arte: cavalo animado (sprite sheet 5 quadros x 4 direções)

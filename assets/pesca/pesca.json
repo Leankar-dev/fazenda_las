@@ -1,0 +1,209 @@
+{
+ "source": "docs/equipamentos_pescca.jpeg",
+ "facing": "left",
+ "items": {
+  "vara_spinning": {
+   "size": [
+    168,
+    129
+   ],
+   "group": "equip"
+  },
+  "vara_fly": {
+   "size": [
+    168,
+    118
+   ],
+   "group": "equip"
+  },
+  "carretel_fechado": {
+   "size": [
+    75,
+    88
+   ],
+   "group": "equip"
+  },
+  "carretel_baitcast": {
+   "size": [
+    96,
+    70
+   ],
+   "group": "equip"
+  },
+  "caixa_pesca": {
+   "size": [
+    112,
+    106
+   ],
+   "group": "equip"
+  },
+  "boia": {
+   "size": [
+    40,
+    64
+   ],
+   "group": "equip"
+  },
+  "colher": {
+   "size": [
+    24,
+    72
+   ],
+   "group": "equip"
+  },
+  "minnow": {
+   "size": [
+    80,
+    45
+   ],
+   "group": "equip"
+  },
+  "minhoca": {
+   "size": [
+    96,
+    21
+   ],
+   "group": "equip"
+  },
+  "popper": {
+   "size": [
+    88,
+    38
+   ],
+   "group": "equip"
+  },
+  "isca_viva": {
+   "size": [
+    96,
+    49
+   ],
+   "group": "equip"
+  },
+  "isca_cera": {
+   "size": [
+    72,
+    60
+   ],
+   "group": "equip"
+  },
+  "linha": {
+   "size": [
+    72,
+    68
+   ],
+   "group": "equip"
+  },
+  "chumbo": {
+   "size": [
+    64,
+    55
+   ],
+   "group": "equip"
+  },
+  "puca": {
+   "size": [
+    109,
+    112
+   ],
+   "group": "equip"
+  },
+  "multiferramenta": {
+   "size": [
+    52,
+    80
+   ],
+   "group": "equip"
+  },
+  "cordao": {
+   "size": [
+    58,
+    80
+   ],
+   "group": "equip"
+  },
+  "balanca": {
+   "size": [
+    62,
+    96
+   ],
+   "group": "equip"
+  },
+  "oculos": {
+   "size": [
+    80,
+    38
+   ],
+   "group": "equip"
+  },
+  "chapeu": {
+   "size": [
+    88,
+    42
+   ],
+   "group": "equip"
+  },
+  "colete": {
+   "size": [
+    82,
+    96
+   ],
+   "group": "equip"
+  },
+  "achiga": {
+   "size": [
+    112,
+    50
+   ],
+   "group": "peixe"
+  },
+  "perca": {
+   "size": [
+    84,
+    57
+   ],
+   "group": "peixe"
+  },
+  "bagre": {
+   "size": [
+    112,
+    43
+   ],
+   "group": "peixe"
+  },
+  "crappie": {
+   "size": [
+    92,
+    52
+   ],
+   "group": "peixe"
+  },
+  "rede_captura": {
+   "size": [
+    89,
+    112
+   ],
+   "group": "equip"
+  },
+  "doca": {
+   "size": [
+    176,
+    124
+   ],
+   "group": "cenario"
+  },
+  "estaca": {
+   "size": [
+    34,
+    96
+   ],
+   "group": "cenario"
+  },
+  "margem": {
+   "size": [
+    128,
+    119
+   ],
+   "group": "cenario"
+  }
+ }
+}

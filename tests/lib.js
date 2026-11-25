@@ -24,7 +24,7 @@ function findChrome(custom) {
 function buildSite(dest, { files = {}, fixtures = {}, scenarioFile = path.join(__dirname, 'browser', 'scenarios.js') } = {}) {
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
-  for (const f of ['index.html', 'style.css', 'art.js', 'animais.js', 'save.js', 'game.js']) fs.copyFileSync(path.join(ROOT, f), path.join(dest, f));
+  for (const f of ['index.html', 'style.css', 'art.js', 'animais.js', 'pesca.js', 'save.js', 'game.js']) fs.copyFileSync(path.join(ROOT, f), path.join(dest, f));
   fs.cpSync(path.join(ROOT, 'assets'), path.join(dest, 'assets'), { recursive: true });
   for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dest, name), content);
   fs.writeFileSync(path.join(dest, 'tests-fixtures.js'), 'window.FIXTURES = ' + JSON.stringify(fixtures) + ';');

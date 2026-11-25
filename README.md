@@ -10,8 +10,8 @@ Para adicionar outro personagem: crie `assets/<pasta>/` com os mesmos 16 sprites
 
 ## Controles
 - **WASD / setas** mover · **Shift** correr
-- **1–6** ferramentas (Forcado, Regador, Sementes, Luvas, Picareta, Machado) ou roda do mouse
-- **Espaço** ou **clique** usa a ferramenta · **E** (ou botão direito) interage · **Q** troca a semente · **C** chama o cachorro · **M** música · **N** efeitos sonoros · **Esc** pausa
+- **1–7** ferramentas (Forcado, Regador, Sementes, Luvas, Picareta, Machado, **Vara de pesca**) ou roda do mouse
+- **Espaço** ou **clique** usa a ferramenta · **E** (ou botão direito) interage · **Q** troca a semente · **C** chama o cachorro · **F** comer peixe · **M** música · **N** efeitos sonoros · **Esc** pausa
 
 ## Árvores frutíferas e machado
 - O **machado (6)** corta árvores: as do cenário (menos as da borda do mapa), as selvagens e as que você plantou. Rende madeira e deixa um toco (a picareta remove o toco). Árvores cortadas ficam cortadas no save.
@@ -27,6 +27,14 @@ Para adicionar outro personagem: crie `assets/<pasta>/` com os mesmos 16 sprites
 - **Galinhas:** são 6 e botam ovos 2 vezes por dia (ao amanhecer e ao meio-dia, 13:00). Ovos não coletados da manhã ficam no chão até você dormir.
 - **Colher frutas:** perto de uma árvore com o balão de fruta, use as **Luvas (4) + Espaço** (ou **E**). O alvo "gruda" no que está pronto ao lado de onde você olha.
 - Leite, carne, trufas, frutas e ovos vão para o cesto/inventário e são vendidos na caixa de vendas.
+
+## Pesca no lago 🎣
+O lago, a leste, tem **peixes de verdade** nadando (você os vê como silhuetas na água; com os **óculos polarizados** eles aparecem coloridos). Na **margem oeste** há uma **doca** de tábuas: de lá a boia alcança mais longe.
+- **Como pescar:** compre a **vara spinning** no empório (aba **Pesca**), selecione a vara (**7**), fique de frente para a água e use **ESPAÇO** (ou clique): a linha é lançada. Um peixe próximo nada até a isca. Quando a boia afundar e aparecer o **!** sobre a cabeça, aperte **ESPAÇO** de novo (ou **E**) dentro de ~1 s para **fisgar**. Apertar cedo demais só recolhe a linha; trocar de ferramenta ou andar para longe também.
+- **Peixes:** perca-sol (comum, vale 10 ◎), crappie (16 ◎), bagre (26 ◎) e achigã (raro, 42 ◎). Os maiores às vezes se **soltam** depois de fisgados. Amanhecer, entardecer e chuva deixam os peixes mais ativos. O lago amanhece cheio e vai repondo peixes durante o dia.
+- **Usar o peixe:** **venda** na caixa de vendas (a balança dá +20%) ou **coma** (**F**, ou Esc → Comer peixe): cada espécie recupera energia (12 a 32). O cesto de pesca comporta 8 peixes (acessórios aumentam).
+- **Equipamentos** (aba **Pesca** do empório): **vara de fly** (os peixes chegam 30% mais rápido) e **carretéis** (mais tempo para fisgar, peixe grande se solta menos); **iscas** de cera e vivas (gastam 1 por lançamento; a viva é mais rápida e atrai os raros); **iscas artificiais** de compra única (minhoca, minnow, colher, popper: cada uma atrai mais uma espécie); e acessórios — chumbada, linha, **puçá**, **óculos polarizados**, **chapéu** (pescar gasta metade da energia), **colete** (às vezes poupa a isca), **caixa de pesca** (mais iscas), **cordão** e **rede de captura** (cabem mais peixes), **balança** e **multiferramenta** (+25% de energia ao comer).
+- A **margem do lago** agora é rochosa, com juncos, e a doca tem estacas (arte de `docs/equipamentos_pescca.jpeg`).
 
 ## Como jogar
 Arar → plantar → regar → (depois das 18:00) dormir na porta da casa → colher → vender na caixa → comprar mais sementes/melhorias.
@@ -76,6 +84,8 @@ Os jogos ficam **só neste navegador** (`localStorage`): limpar os dados do site
 - `assets/animais/` – cachorro, vaca e porco (vistas estáticas), `props/` (37 acessórios) e `tiles/` (15), recortados de `docs/animais.jpeg`
 - `assets/animais/cavalo/` – **sprite sheet animada** `walk_sheet.png` (920×640, fundo transparente: **5 quadros do ciclo × 4 direções**, células de 184×160 com os pés no centro-base), `walk_sheet.json` (metadados) e `icon.png` (busto 96×96 da loja). Gerados de `docs/cavalo_sprite_sheet.jpeg` por `python tools/make-horse-sprites.py` (numpy, scipy, opencv, Pillow); o jogo recorta a sheet em 20 quadros ao carregar
 - `animais.js` – curral, comportamento dos animais e montaria
+- `pesca.js` – a **pesca**: peixes, lago, lançamento (voar → esperar → fisgar → recolher), catálogo e efeitos dos equipamentos, compra, comer/vender, saneamento do save (lógica sem DOM, testada em Node)
+- `assets/pesca/` – 29 sprites de pesca (4 peixes virados para a esquerda, varas, carretéis, iscas, acessórios, rede, **doca, estaca e margem do lago**) + `pesca.json`; gerados de `docs/equipamentos_pescca.jpeg` por `python tools/make-fishing-sprites.py`
 - `art.js` – arte procedural complementar (plantações, empório, árvores, galinhas...)
 - `save.js` – persistência (`SaveManager`): salvar/carregar, cópias de segurança, exportar/importar, proteção contra duas abas (aviso por `rev` + bloqueio de jogo por Web Locks), sonda do storage, `persist()` e configuração de áudio
 - `game.js` – lógica, renderização, UI e áudio (WebAudio)

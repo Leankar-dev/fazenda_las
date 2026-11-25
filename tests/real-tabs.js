@@ -38,7 +38,7 @@ const stored = tab => tab.ev(`(()=>{const r=localStorage.getItem('fazenda_las:v2
 async function main() {
   const chromeArg = (process.argv.find(a => a.startsWith('--chrome=')) || '').split('=')[1];
   const chrome = lib.findChrome(chromeArg), prof = fs.mkdtempSync(path.join(os.tmpdir(), 'fazenda-cdp-')), site = fs.mkdtempSync(path.join(os.tmpdir(), 'fazenda-site-'));
-  for (const f of ['index.html', 'style.css', 'art.js', 'animais.js', 'save.js', 'game.js']) fs.copyFileSync(path.join(lib.ROOT, f), path.join(site, f));
+  for (const f of ['index.html', 'style.css', 'art.js', 'animais.js', 'pesca.js', 'save.js', 'game.js']) fs.copyFileSync(path.join(lib.ROOT, f), path.join(site, f));
   fs.cpSync(path.join(lib.ROOT, 'assets'), path.join(site, 'assets'), { recursive: true });
   const srv = await serve(site), URL = 'http://127.0.0.1:' + HTTP_PORT + '/index.html?debug';
   const child = cp.spawn(chrome, ['--headless=new', '--disable-gpu', '--no-first-run', '--user-data-dir=' + prof, '--remote-debugging-port=' + PORT, 'about:blank'], { stdio: 'ignore' });
