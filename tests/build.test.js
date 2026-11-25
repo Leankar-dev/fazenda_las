@@ -87,21 +87,26 @@ test('cavalo: os 7 PNGs antigos foram removidos e a loja usa o ícone novo', () 
   assert.deepStrictEqual(left, ['icon.png', 'walk_sheet.json', 'walk_sheet.png'], 'sobrou arquivo antigo: ' + left);
   const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'); assert.ok(game.includes("cavalo/icon.png") && !/cavalo\/(front|back|profile|bottomup)/.test(game + fs.readFileSync(path.join(ROOT, 'animais.js'), 'utf8')), 'ninguém cita os sprites antigos');
 });
-test('fazendeiro: walk_sheet.png × walk_sheet.json × constantes WALKER do game.js batem (grade, altura, laço, repouso); sem arquivos antigos nem órfãos', () => {
-  const dir = path.join(ROOT, 'assets', 'fazendeiro'), meta = JSON.parse(fs.readFileSync(path.join(dir, 'walk_sheet.json'), 'utf8')), png = pngInfo(path.join(dir, 'walk_sheet.png'));
-  assert.deepStrictEqual([png.w, png.h], meta.size); assert.strictEqual(png.colorType, 6, 'RGBA (fundo transparente)'); assert.deepStrictEqual([meta.cell[0] * meta.columns, meta.cell[1] * meta.rows.length], meta.size);
-  const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'), blk = /const WALKER = (\{[\s\S]*?\n  \});/.exec(game); assert.ok(blk, 'bloco WALKER no game.js');
-  const W = new Function('return ' + blk[1])();
-  assert.deepStrictEqual(W.cell, meta.cell); assert.strictEqual(W.cols, meta.columns); assert.strictEqual(W.ref, meta.bodyHeight); assert.deepStrictEqual(W.loop, meta.loop); assert.deepStrictEqual(W.idle, meta.idleFrame);
-  assert.deepStrictEqual(Object.keys(W.rows), meta.rows); assert.deepStrictEqual(Object.values(W.rows), meta.rows.map((_, i) => i));
-  for (const d of meta.rows) assert.ok(meta.loop[d].includes(meta.idleFrame[d]) && meta.loop[d].every(i => i >= 0 && i < meta.columns), 'loop/repouso coerentes: ' + d);
-  assert.ok(!meta.loop.up.includes(3), 'o 4º quadro de costas (sem chapéu na fonte) fica fora do laço'); assert.ok(meta.loop.right.length === 4 && meta.loop.left.length === 4 && meta.loop.down.length === 4, 'o 5º quadro repetido fica fora do laço');
-  const front = pngInfo(path.join(dir, 'front.png')); assert.deepStrictEqual([front.w, front.h], meta.frontSize); assert.ok(front.h >= 300, 'retrato em alta (título e cartões mostram até 340 px)');
-  const tools = /TOOL_SPRITES = (\[[^\]]*\])/.exec(game), body = /BODY_SPRITES = (\[[^\]]*\])/.exec(game); assert.ok(tools && body);
-  const T = new Function('return ' + tools[1])(), B = new Function('return ' + body[1])();
-  assert.deepStrictEqual(fs.readdirSync(dir).sort(), [...T.map(n => n + '.png'), 'front.png', 'walk_sheet.json', 'walk_sheet.png'].sort(), 'a pasta do fazendeiro tem EXATAMENTE o que o jogo usa (sem sobras nem faltas)');
-  const fz = fs.readdirSync(path.join(ROOT, 'assets', 'fazendeira')); for (const n of [...T, ...B]) assert.ok(fz.includes(n + '.png'), 'a fazendeira precisa de ' + n + '.png');
-  assert.ok(/fazendeiro: \{[^}]*front: 'front\.png', walker: true/.test(game) && /fazendeira: \{[^}]*front: 'front_walk\.png'/.test(game));
+test('personagens: walk_sheet.png × walk_sheet.json × constantes WALKERS do game.js batem nos DOIS (grade, altura, laço, repouso); pastas só com o que o jogo usa', () => {
+  const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'), blk = /const WALKERS = (\{[\s\S]*?\n  \});/.exec(game); assert.ok(blk, 'bloco WALKERS no game.js');
+  const WALKERS = new Function('return ' + blk[1])(), tools = /TOOL_SPRITES = (\[[^\]]*\])/.exec(game); assert.ok(tools); const T = new Function('return ' + tools[1])();
+  assert.deepStrictEqual(Object.keys(WALKERS).sort(), ['fazendeira', 'fazendeiro']);
+  for (const id of Object.keys(WALKERS)) {
+    const dir = path.join(ROOT, 'assets', id), meta = JSON.parse(fs.readFileSync(path.join(dir, 'walk_sheet.json'), 'utf8')), png = pngInfo(path.join(dir, 'walk_sheet.png')), W = WALKERS[id];
+    assert.strictEqual(meta.character, id, id + ': o json é do personagem certo');
+    assert.deepStrictEqual([png.w, png.h], meta.size, id); assert.strictEqual(png.colorType, 6, id + ': RGBA (fundo transparente)'); assert.deepStrictEqual([meta.cell[0] * meta.columns, meta.cell[1] * meta.rows.length], meta.size);
+    assert.deepStrictEqual(W.cell, meta.cell, id); assert.strictEqual(W.cols, meta.columns, id); assert.strictEqual(W.ref, meta.bodyHeight, id); assert.deepStrictEqual(W.loop, meta.loop, id); assert.deepStrictEqual(W.idle, meta.idleFrame, id);
+    assert.deepStrictEqual(Object.keys(W.rows), meta.rows, id); assert.deepStrictEqual(Object.values(W.rows), meta.rows.map((_, i) => i), id);
+    for (const d of meta.rows) assert.ok(meta.loop[d].includes(meta.idleFrame[d]) && meta.loop[d].every(i => i >= 0 && i < meta.columns), id + ': loop/repouso coerentes: ' + d);
+    const front = pngInfo(path.join(dir, 'front.png')); assert.deepStrictEqual([front.w, front.h], meta.frontSize, id); assert.ok(front.h >= 300, id + ': retrato em alta (título e cartões mostram até 340 px)');
+    assert.deepStrictEqual(fs.readdirSync(dir).sort(), [...T.map(n => n + '.png'), 'front.png', 'walk_sheet.json', 'walk_sheet.png'].sort(), id + ': a pasta tem EXATAMENTE o que o jogo usa (sem sobras nem faltas)');
+    assert.ok(new RegExp(id + ": \{[^}]*front: 'front\.png'").test(game), id + ': retrato front.png no CHARACTERS');
+  }
+  // diferenças de fonte tratadas
+  const E = WALKERS.fazendeiro, K = WALKERS.fazendeira;
+  assert.ok(!E.loop.up.includes(3), 'fazendeiro: o 4º quadro de costas (sem chapéu na fonte) fica fora do laço'); assert.ok(E.loop.right.length === 4 && E.loop.left.length === 4 && E.loop.down.length === 4, 'fazendeiro: o 5º quadro repetido fica fora do laço');
+  assert.ok(Object.values(K.loop).every(l => l.length === 5), 'fazendeira: ciclo real de 5 quadros (nenhum repete o 1º)');
+  assert.ok(!/BODY_SPRITES|front_stand|drawSide|drawFrontBack|walker: true/.test(game), 'sobrou código do desenho antigo (sprites estáticos com pernas giradas)');
 });
 test('casa: casa.png × casa.json × constantes HOUSE_ART do game.js batem; o celeiro procedural foi removido do art.js', () => {
   const meta = JSON.parse(fs.readFileSync(path.join(ROOT, 'assets', 'casa.json'), 'utf8')), png = pngInfo(path.join(ROOT, 'assets', 'casa.png'));

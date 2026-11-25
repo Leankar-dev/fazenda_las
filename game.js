@@ -20,8 +20,8 @@
 
   /* ---------------- personagens ---------------- */
   const CHARACTERS = {
-    fazendeiro: { id: 'fazendeiro', name: 'Elias', role: 'O Fazendeiro', desc: 'Colete de couro, camisa xadrez azul e muita vontade de plantar.', folder: 'assets/fazendeiro', front: 'front.png', walker: true },
-    fazendeira: { id: 'fazendeira', name: 'Karen', role: 'A Fazendeira', desc: 'Camisa xadrez vermelha, cinto de ferramentas e mão boa para a terra.', folder: 'assets/fazendeira', front: 'front_walk.png' },
+    fazendeiro: { id: 'fazendeiro', name: 'Elias', role: 'O Fazendeiro', desc: 'Colete de couro, camisa xadrez azul e muita vontade de plantar.', folder: 'assets/fazendeiro', front: 'front.png' },
+    fazendeira: { id: 'fazendeira', name: 'Karen', role: 'A Fazendeira', desc: 'Camisa xadrez vermelha, cinto de ferramentas e mão boa para a terra.', folder: 'assets/fazendeira', front: 'front.png' },
   };
   const CHAR_IDS = Object.keys(CHARACTERS);
   for (const id of CHAR_IDS) CHARACTERS[id].defName = CHARACTERS[id].name;     // nome padrão (o jogador pode trocar)
@@ -31,29 +31,36 @@
   function applyNames(names) { for (const id of CHAR_IDS) CHARACTERS[id].name = cleanName(names && names[id], CHARACTERS[id].defName); }
   let CHAR = CHARACTERS.fazendeiro;
   const charSrc = n => CHAR.folder + '/' + n + '.png';
-  /* Sprites do personagem. FERRAMENTAS e cesto: arquivos soltos, iguais para os dois. CORPO: a fazendeira usa 4 sprites estáticos animados por código (pernas giradas);
-     o FAZENDEIRO (`walker: true`) usa uma sprite sheet de caminhada (assets/fazendeiro/walk_sheet.png, gerada por tools/make-fazendeiro-sprites.py: 4 direções x 5 quadros).
-     Constantes de WALKER = walk_sheet.json (tests/build.test.js confere). Quadros em canvas fatiados uma vez ao carregar; `front.png` é o retrato (título, escolha, HUD). */
+  /* Sprites do personagem. FERRAMENTAS e cesto: arquivos soltos (TOOL_SPRITES), iguais para os dois. CORPO: cada personagem tem uma SPRITE SHEET de caminhada
+     (assets/<pasta>/walk_sheet.png, gerada por tools/make-walker-sprites.py: 4 direções x 5 quadros) + `front.png`, o retrato (título, escolha, HUD).
+     Constantes de WALKERS = walk_sheet.json de cada um (tests/build.test.js confere). Os quadros são fatiados em canvas uma vez ao carregar. */
   const TOOL_SPRITES = ['basket', 'glove1', 'glove2', 'pickaxe', 'pitchfork', 'seedbag_empty'];
-  const BODY_SPRITES = ['back', 'front_stand', 'front_walk', 'left_stand'];
-  const SPRITE_KEYS = [...TOOL_SPRITES, ...BODY_SPRITES, 'walk'];
-  const WALKER = {
-    cell: [112, 172], cols: 5, ref: 162,                                       // ref = altura do personagem (chapéu aos pés) em px da sheet: na tela vira 104
-    rows: { right: 0, left: 1, down: 2, up: 3 },
-    loop: { right: [0, 1, 2, 3], left: [0, 1, 2, 3], down: [0, 1, 2, 3], up: [0, 1, 2, 4] },   // quadros do ciclo (o 5º repete o 1º; costas sem o 4º: sem chapéu na fonte)
-    idle: { right: 1, left: 3, down: 0, up: 0 },                               // quadro de repouso (pernas mais juntas)
+  const SPRITE_KEYS = [...TOOL_SPRITES, 'front_walk', 'back', 'left_stand', 'walk'];      // o que fica em IMGS para o personagem ativo (o resto é undefined: nada do anterior sobra)
+  const WALKERS = {
+    fazendeiro: {
+      cell: [112, 172], cols: 5, ref: 162,                                     // ref = altura do personagem (chapéu aos pés) em px da sheet: na tela vira 104
+      rows: { right: 0, left: 1, down: 2, up: 3 },
+      loop: { right: [0, 1, 2, 3], left: [0, 1, 2, 3], down: [0, 1, 2, 3], up: [0, 1, 2, 4] },   // quadros do ciclo (o 5º repete o 1º; costas sem o 4º: sem chapéu na fonte)
+      idle: { right: 1, left: 3, down: 0, up: 0 },                             // quadro de repouso (pernas mais juntas)
+    },
+    fazendeira: {
+      cell: [112, 172], cols: 5, ref: 162,
+      rows: { right: 0, left: 1, down: 2, up: 3 },
+      loop: { right: [0, 1, 2, 3, 4], left: [0, 1, 2, 3, 4], down: [0, 1, 2, 3, 4], up: [0, 1, 2, 3, 4] },   // ciclo real de 5 quadros (nenhum repete o 1º); de costas o chapéu foi composto (a fonte não o tinha)
+      idle: { right: 4, left: 4, down: 4, up: 1 },
+    },
   };
   const DIR_NAMES = ['down', 'up', 'left', 'right'];                           // P.dir: 0 baixo · 1 cima · 2 esquerda · 3 direita
   const TILE_LIST = ['casa', 'tile_bare', 'tile_muddy', 'tile_loose', 'tile_grassA', 'tile_grassB', 'tile_grassC', 'tile_grassD', 'tile_wood'];
   const CHAR_IMGS = {};
-  // recorta a sheet em canvas (quadros) e deriva as imagens que o cavaleiro usa (`back`, `left_stand` = recortes justos do repouso; `left_stand` olha para a DIREITA, como no sprite antigo). Sheet que não carregou = quadros vazios.
-  function sliceWalker(ci) {
-    const sh = ci.sheet, [cw, ch] = WALKER.cell, ok = !!sh && sh.width >= cw * WALKER.cols && sh.height >= ch * DIR_NAMES.length, walk = {};
+  // recorta a sheet de UM personagem em canvas (quadros) e deriva as imagens que o cavaleiro usa (`back`, `left_stand` = recortes justos do repouso; `left_stand` olha para a DIREITA, como no sprite antigo). Sheet que não carregou = quadros vazios.
+  function sliceWalker(ci, W) {
+    const sh = ci.sheet, [cw, ch] = W.cell, ok = !!sh && sh.width >= cw * W.cols && sh.height >= ch * DIR_NAMES.length, walk = {};
     for (const d of DIR_NAMES) {
       walk[d] = [];
-      for (let f = 0; f < WALKER.cols; f++) {
+      for (let f = 0; f < W.cols; f++) {
         const c = document.createElement('canvas'); c.width = cw; c.height = ch;
-        if (ok) c.getContext('2d').drawImage(sh, f * cw, WALKER.rows[d] * ch, cw, ch, 0, 0, cw, ch);
+        if (ok) c.getContext('2d').drawImage(sh, f * cw, W.rows[d] * ch, cw, ch, 0, 0, cw, ch);
         walk[d].push(c);
       }
     }
@@ -63,7 +70,7 @@
       if (x1 < 0) return c;
       const o = document.createElement('canvas'); o.width = x1 - x0 + 1; o.height = y1 - y0 + 1; o.getContext('2d').drawImage(c, x0, y0, o.width, o.height, 0, 0, o.width, o.height); return o;
     };
-    ci.walk = walk; ci.back = tight(walk.up[WALKER.idle.up]); ci.left_stand = tight(walk.right[WALKER.idle.right]);
+    ci.walk = walk; ci.back = tight(walk.up[W.idle.up]); ci.left_stand = tight(walk.right[W.idle.right]);
   }
 
   /* ---------------- dados ---------------- */
@@ -1862,73 +1869,19 @@
   const windAmt = () => (.7 + .5 * Math.sin(time * .35) + .25 * Math.sin(time * 1.1)) * (S.rain ? 1.8 : 1);
 
   const WALK_FREQ = 8;                 // rad/s da fase de caminhada (1 passo = pi)
-  const HIP = .55, HIP_PAD = .06;      // quadril (fração da altura) e sobreposição do tronco
 
-  // perfil: tronco + duas metades de perna que giram a partir do quadril
-  function drawSide(img, w, h, ph, wk, sway) {
-    const iw = img.width, ih = img.height, sc = h / ih;
-    const hipS = Math.round(ih * HIP), padS = Math.round(ih * HIP_PAD), splitS = Math.round(iw * .5);
-    const x0 = -w / 2, top = -h + 6, hipD = hipS * sc, splitD = splitS * sc;
-    const pivX = x0 + splitD, pivY = top + hipD, L = h - 6 - hipD;
-    const s = Math.sin(ph), u = Math.abs(s);
-    const open = .34 * wk * Math.pow(u, .85);                 // abertura do passo (rad)
-    const liftL = 5.5 * wk * Math.pow(Math.max(0, -Math.cos(ph)), 2);   // perna de trás passa à frente
-    const liftR = 5.5 * wk * Math.pow(Math.max(0, Math.cos(ph)), 2);
-    const leg = (sx, sw, ang, lift, dx) => {
-      g.save(); g.translate(pivX, pivY + L * (1 - Math.cos(ang)) - lift); g.rotate(ang); g.translate(-pivX, -pivY);
-      g.drawImage(img, sx, hipS, sw, ih - hipS, x0 + dx, top + hipD, sw * sc, (ih - hipS) * sc); g.restore();
-    };
-    leg(0, splitS, open + (wk * .06 * Math.cos(ph)), liftL, 0);          // metade de trás
-    leg(splitS, iw - splitS, -open - (wk * .06 * Math.cos(ph)), liftR, splitD);   // metade da frente
-    // tronco (balança em oposição ao quadril)
-    g.save(); g.translate(0, pivY); g.rotate(sway); g.translate(0, -pivY);
-    g.drawImage(img, 0, 0, iw, hipS + padS, x0, top, w, (hipS + padS) * sc);
-    g.restore();
-  }
-
-  // frente/costas: espelha a pose de passada com transição suave (sem "pulo")
-  function drawFrontBack(img, w, h, ph, wk) {
-    const s = Math.sin(ph) * wk, t = clamp((s + .22) / .44, 0, 1), m = t * t * (3 - 2 * t);   // 0 normal .. 1 espelhado
-    const draw = (flip, a) => { g.save(); g.globalAlpha = a; if (flip) g.scale(-1, 1); g.drawImage(img, -w / 2, -h + 6, w, h); g.restore(); };
-    if (wk < .05) { draw(false, 1); return; }
-    // base sempre opaca; a outra pose entra por cima (evita ficar semitransparente)
-    if (m < .5) { draw(false, 1); if (m > .02) draw(true, m); }
-    else { draw(true, 1); if (m < .98) draw(false, 1 - m); }
-  }
-
-  // personagem com sheet (fazendeiro): o quadro vem da FASE da caminhada (ciclo de `loop` quadros por passada dupla); parado = quadro de repouso. Sem pernas girando por código:
+  // o quadro vem da FASE da caminhada (ciclo de `loop` quadros por passada dupla); parado = quadro de repouso. Sem pernas girando por código:
   // as pernas já estão desenhadas em cada quadro. Fica o respiro parado, o avanço ao usar ferramenta e o pulo.
-  function drawWalkerSprite() {
-    const dir = P.dir, wk = P.wk, name = DIR_NAMES[dir], loop = WALKER.loop[name], ph = P.walkT * WALK_FREQ / (2 * Math.PI);
-    const fr = wk > .12 ? loop[Math.floor(((ph % 1) + 1) % 1 * loop.length)] : WALKER.idle[name];
-    const img = IMGS.walk[name][fr], sc = 104 / WALKER.ref, w = img.width * sc, h = img.height * sc;
+  function drawPlayerSprite() {
+    const W = WALKERS[CHAR.id], dir = P.dir, wk = P.wk, name = DIR_NAMES[dir], loop = W.loop[name], ph = P.walkT * WALK_FREQ / (2 * Math.PI);
+    const fr = wk > .12 ? loop[Math.floor(((ph % 1) + 1) % 1 * loop.length)] : W.idle[name];
+    const img = IMGS.walk[name][fr], sc = 104 / W.ref, w = img.width * sc, h = img.height * sc;
     const bob = Math.sin(time * 2) * .6 * (1 - wk);
     let ox = 0, oy = 0;
     if (act) { const k = Math.sin(clamp(act.t / act.dur, 0, 1) * Math.PI); ox = DX[dir] * 5 * k; oy = DY[dir] * 4 * k + 2 * k; }
     const hop = P.hop > 0 ? Math.sin(P.hop / .3 * Math.PI) * 14 : 0;
     g.drawImage(img, P.x + ox - w / 2, P.y - bob + oy - hop - h + 6, w, h);
   }
-  function drawPlayerSprite() {
-    if (IMGS.walk) { drawWalkerSprite(); return; }
-    const dir = P.dir, wk = P.wk, ph = P.walkT * WALK_FREQ, s = Math.sin(ph), u = Math.abs(s);
-    const side = dir >= 2;
-    let img = dir === 0 ? IMGS.front_walk : dir === 1 ? IMGS.back : IMGS.left_stand;
-    const crossed = side && wk < .02 && P.idleT > 2.5;            // parado de lado: cruza os braços
-    if (crossed) img = IMGS.front_stand;
-    const h = 104, w = img.width * h / img.height;
-    const bob = wk * (1 - u) * 3 + Math.sin(time * 2) * .6 * (1 - wk);   // corpo sobe no cruzamento das pernas
-    let ox = 0, oy = 0, rot = side ? wk * .035 : wk * s * .03;
-    if (act) { const k = Math.sin(clamp(act.t / act.dur, 0, 1) * Math.PI); ox = DX[dir] * 5 * k; oy = DY[dir] * 4 * k + 2 * k; }
-    const hop = P.hop > 0 ? Math.sin(P.hop / .3 * Math.PI) * 14 : 0;
-    const sq = wk * u * .03;
-    g.save(); g.translate(P.x + ox + (side ? 0 : s * wk * 1.2), P.y - bob + oy - hop); g.rotate(rot); g.scale(1 + sq * .6, 1 - sq);
-    if (dir === 2) g.scale(-1, 1);
-    if (side && !crossed) drawSide(img, w, h, ph, wk, -wk * s * .03);
-    else if (side) g.drawImage(img, -w / 2, -h + 6, w, h);
-    else drawFrontBack(img, w, h, ph, wk);
-    g.restore();
-  }
-
   function drawActTool(behind) {
     if (!act) return;
     const isBehind = P.dir === 1; if (isBehind !== behind) return;
@@ -2327,7 +2280,7 @@
       SaveManager.session.startNew(prev); save();
     }
     if (loadIt) openMenu();      // Continuar: o jogo começa PAUSADO (menu aberto): nenhum tempo de jogo se perde e o clique serve de gesto para o áudio
-    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKER, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
+    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKERS, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
   }
 
   async function boot() {
@@ -2361,8 +2314,9 @@
       const jobs = TILE_LIST.map(n => load('assets/' + n + '.png', IMGS, n));
       for (const id of CHAR_IDS) {
         const C = CHARACTERS[id], ci = CHAR_IMGS[id] = {};
-        for (const n of C.walker ? TOOL_SPRITES : [...TOOL_SPRITES, ...BODY_SPRITES]) jobs.push(load(C.folder + '/' + n + '.png', ci, n));
-        if (C.walker) { jobs.push(load(C.folder + '/walk_sheet.png', ci, 'sheet').then(() => sliceWalker(ci))); jobs.push(load(C.folder + '/' + C.front, ci, 'front_walk')); }
+        for (const n of TOOL_SPRITES) jobs.push(load(C.folder + '/' + n + '.png', ci, n));
+        jobs.push(load(C.folder + '/walk_sheet.png', ci, 'sheet').then(() => sliceWalker(ci, WALKERS[id])));
+        jobs.push(load(C.folder + '/' + C.front, ci, 'front_walk'));
       }
       jobs.push(...Animals.load(load));
       await Promise.all(jobs);

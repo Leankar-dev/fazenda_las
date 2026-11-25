@@ -1,0 +1,69 @@
+{
+  "image": "walk_sheet.png",
+  "cell": [
+    112,
+    172
+  ],
+  "columns": 5,
+  "rows": [
+    "right",
+    "left",
+    "down",
+    "up"
+  ],
+  "size": [
+    560,
+    688
+  ],
+  "bodyHeight": 162,
+  "padBottom": 2,
+  "loop": {
+    "right": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "left": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "down": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "up": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "idleFrame": {
+    "right": 4,
+    "left": 4,
+    "down": 4,
+    "up": 1
+  },
+  "footprintWidth": {
+    "right": 78,
+    "left": 80,
+    "down": 74,
+    "up": 63
+  },
+  "front": "front.png",
+  "frontSize": [
+    140,
+    324
+  ],
+  "note": "ciclo de caminhada; `loop` = quadros do ciclo; as poses de costas ganharam o chapéu por composição (a fonte as desenhou sem). Direções do jogo: 0 baixo(front) · 1 cima(back) · 2 esquerda · 3 direita",
+  "character": "fazendeira"
+}

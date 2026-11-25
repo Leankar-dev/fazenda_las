@@ -60,5 +60,6 @@
     134,
     324
   ],
-  "note": "ciclo de caminhada; a linha \"up\" não usa o quadro 3 (fazendeiro sem chapéu na fonte). Direções do jogo: 0 baixo(front) · 1 cima(back) · 2 esquerda · 3 direita"
+  "note": "ciclo de caminhada; `loop` = quadros do ciclo (excluídos por defeito da fonte: {'up': [3]}). Direções do jogo: 0 baixo(front) · 1 cima(back) · 2 esquerda · 3 direita",
+  "character": "fazendeiro"
 }
