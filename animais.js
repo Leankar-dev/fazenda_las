@@ -1,7 +1,7 @@
 'use strict';
 /* ============================================================
    animais.js  -  curral, animais e companheiros da fazenda
-   Sprites: assets/animais/<animal>/*.png (recortados de docs/animais.jpeg)
+   Sprites: assets/animais/<animal>/*.png (recortados de docs/animais.jpeg). O CAVALO é uma sprite sheet animada (walk_sheet.png, de docs/cavalo_sprite_sheet.jpeg).
    Cachorro: companheiro que segue o jogador e cava tesouros.
    Vaca: ordenha diária.  Porco: acha trufas.  Cavalo: montaria.
    ============================================================ */
@@ -34,8 +34,18 @@ const Animals = (() => {
     cachorro: { h: 46, speed: 70, step: 15, bob: 2.4, right: 'profile_left', left: 'profile_right' },
     vaca:     { h: 72, speed: 20, step: 7,  bob: 1.4, right: 'profile_left', left: 'profile_right' },
     porco:    { h: 44, speed: 28, step: 12, bob: 1.8, right: 'profile_right', left: 'profile_left' },
-    cavalo:   { h: 98, speed: 38, step: 9,  bob: 2.2, right: 'profile_left', left: 'profile_left' },
+    cavalo:   { h: 104, speed: 38, step: 9,  bob: .6 },       // sem right/left: usa a sheet (HORSE); o balanço é só um respiro, as pernas já se mexem nos quadros
   };
+  /* Sprite sheet do cavalo (assets/animais/cavalo/walk_sheet.png + walk_sheet.json — gerada por tools/make-horse-sprites.py; tests/build.test.js confere que estas
+     constantes batem com o json). Grade uniforme: 5 colunas = quadros do ciclo de caminhada · 4 linhas = direções. Os pés ficam no centro-base de cada célula. */
+  const HORSE = {
+    cell: [184, 160], cols: 5, ref: 148,                                       // ref = altura do cavalo de lado (sem folga): K.h é a altura dele na tela
+    rows: { right: 0, left: 1, down: 2, up: 3 },
+    foot: { right: 168, left: 169, down: 51, up: 50 },                         // largura do corpo por direção (a sombra usa isto, não a da célula)
+    idle: { right: 2, left: 3, down: 1, up: 4 },                               // quadro de repouso (pernas juntas)
+    fps: 5, fpsRide: 9,                                                        // quadros/s andando sozinho e montado (o montado é quase 2x mais rápido)
+  };
+  const DIR_NAMES = ['down', 'up', 'left', 'right'];                           // a.dir: 0 baixo · 1 cima · 2 esquerda · 3 direita
   const VIEWS = ['front', 'front34', 'back', 'back34', 'profile_left', 'profile_right'];
   const PROPS = ['milk_bucket', 'watering_trough', 'hay_bale', 'feed_trough', 'pig_feeder', 'salt_lick', 'mud_puddle', 'mud_puddle2', 'paw_print', 'apple', 'dog_bowl_water'];
   const TILES = ['straw', 'rooting_ground'];
@@ -48,10 +58,27 @@ const Animals = (() => {
 
   function load(loader) {
     const jobs = [];
-    for (const k in KINDS) { IMGS[k] = {}; for (const v of VIEWS) jobs.push(loader(`${BASE}${k}/${v}.png`, IMGS[k], v)); }
+    for (const k in KINDS) {
+      IMGS[k] = {};
+      if (k === 'cavalo') { jobs.push(loader(`${BASE}cavalo/walk_sheet.png`, IMGS[k], 'sheet').then(sliceHorse)); continue; }
+      for (const v of VIEWS) jobs.push(loader(`${BASE}${k}/${v}.png`, IMGS[k], v));
+    }
     for (const p of PROPS) jobs.push(loader(`${BASE}props/${p}.png`, IMGS.props, p));
     for (const t of TILES) jobs.push(loader(`${BASE}tiles/${t}.png`, IMGS.tiles, t));
     return jobs;
+  }
+  // recorta a sheet em 20 quadros (canvas) uma vez: o resto do código desenha um quadro como desenha qualquer sprite. Sheet que não carregou = quadros vazios (nunca lança).
+  function sliceHorse() {
+    const sh = IMGS.cavalo.sheet, [cw, ch] = HORSE.cell, ok = !!sh && sh.width >= cw * HORSE.cols && sh.height >= ch * DIR_NAMES.length, walk = {};
+    for (const d of DIR_NAMES) {
+      walk[d] = [];
+      for (let f = 0; f < HORSE.cols; f++) {
+        const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+        if (ok) c.getContext('2d').drawImage(sh, f * cw, HORSE.rows[d] * ch, cw, ch, 0, 0, cw, ch);
+        walk[d].push(c);
+      }
+    }
+    IMGS.cavalo.walk = walk;
   }
   const bind = env => { E = env; };
   // carne do porco: 2 vezes por dia (de manhã e a partir do meio-dia), uma por porco em cada janela
@@ -215,6 +242,7 @@ const Animals = (() => {
     const P = E.P;
     for (const a of list) {
       a.t += dt; if (a.hop > 0) a.hop -= dt;
+      if (a.kind === 'cavalo') a.wp = a.moving ? (a.wp || 0) + dt * (a === horse && riding ? HORSE.fpsRide : HORSE.fps) : 0;      // fase do ciclo de caminhada; parou = quadro de repouso
       if (a.love > 0) { a.love -= dt; if (Math.random() < dt * 5) E.heart(a.x + rnd(-10, 10), a.y - KINDS[a.kind].h * .85); }
       if (a === horse && riding) { a.x = P.x; a.y = P.y; a.dir = P.dir; a.moving = P.moving && P.wk > .2; continue; }
       if (a.kind === 'cachorro') dogAI(a, dt); else wanderAI(a, dt, S);
@@ -275,8 +303,11 @@ const Animals = (() => {
   function pickSprite(a) {
     const im = IMGS[a.kind], K = KINDS[a.kind];
     const alt = Math.floor(a.t * 3.4) % 2 === 0;
+    if (a.kind === 'cavalo') {
+      const d = DIR_NAMES[a.dir] || 'down', fr = a.moving ? Math.floor(a.wp || 0) % HORSE.cols : HORSE.idle[d];
+      return { img: im.walk[d][fr], flip: false, foot: HORSE.foot[d] };
+    }
     if (a.dir >= 2) {
-      if (a.kind === 'cavalo') return { img: a.moving && alt ? im.profile_right : im.profile_left, flip: a.dir === 2 };
       return { img: im[a.dir === 3 ? K.right : K.left], flip: false };
     }
     if (a.kind === 'cachorro') {
@@ -286,17 +317,19 @@ const Animals = (() => {
     return { img: a.dir === 0 ? im.front : im.back, flip: false };
   }
   function sizeOf(a, img) {
-    const K = KINDS[a.kind], ref = IMGS[a.kind].profile_left, sc = K.h / ref.height;
+    const K = KINDS[a.kind], sc = K.h / (a.kind === 'cavalo' ? HORSE.ref : IMGS[a.kind].profile_left.height);
     return { w: img.width * sc, h: img.height * sc, sc };
   }
 
+  // largura da sombra: o cavalo usa a largura do CORPO (de frente ele é estreito; a célula da sheet é larga)
+  const shadowW = (pk, w, h, sc, k) => pk.foot ? pk.foot * sc * (pk.foot < 100 ? k * 1.4 : k) : Math.min(w, h * 1.6) * k;
   function drawAnimal(g, a, S) {
-    const K = KINDS[a.kind], { img, flip } = pickSprite(a), { w, h } = sizeOf(a, img);
+    const K = KINDS[a.kind], pk = pickSprite(a), { img, flip } = pk, { w, h, sc } = sizeOf(a, img);
     const bob = a.moving ? Math.abs(Math.sin(a.t * K.step)) * K.bob : Math.sin(a.t * 1.6 + a.id) * .5;
     const hop = a.hop > 0 ? Math.sin(a.hop / .25 * Math.PI) * 9 : 0;
-    E.shadow(g, a.x, a.y - 1, Math.min(w, h * 1.6) * .36, 5 + K.h * .05, .3);
+    E.shadow(g, a.x, a.y - 1, shadowW(pk, w, h, sc, .36), 5 + K.h * .05, .3);
     g.save(); g.translate(a.x, a.y - bob - hop);
-    if (a.moving) g.rotate(Math.sin(a.t * K.step * .5) * (a.kind === 'cavalo' ? .018 : .03));
+    if (a.moving && a.kind !== 'cavalo') g.rotate(Math.sin(a.t * K.step * .5) * .03);      // o cavalo já anima as pernas nos quadros
     if (flip) g.scale(-1, 1);
     g.drawImage(img, -w / 2, -h + 3, w, h);
     g.restore();
@@ -323,22 +356,23 @@ const Animals = (() => {
   // jogador montado: cavalo + tronco do personagem na sela
   function drawMounted(g, P, CI, S) {
     const a = horse; if (!a) return;
-    const K = KINDS.cavalo, { img, flip } = pickSprite(a), { w, h } = sizeOf(a, img);
+    const K = KINDS.cavalo, pk = pickSprite(a), { img, flip } = pk, { w, h, sc } = sizeOf(a, img);
     const bob = P.wk > .2 ? Math.abs(Math.sin(a.t * K.step)) * K.bob : Math.sin(a.t * 1.6) * .5;
     const dir = P.dir, rider = dir === 0 ? CI.front_walk : dir === 1 ? CI.back : CI.left_stand;
     const frac = .7, rh = 104, rs = rh / rider.height, rw = rider.width * rs, ph = rider.height * frac * rs;
-    const saddle = P.y - h * .55 - bob;
+    const saddle = P.y - h * .66 - bob;              // a linha do dorso do cavalo novo é mais alta que a do antigo
     const drawRider = () => {
       g.save(); g.translate(P.x + (dir >= 2 ? (dir === 3 ? -3 : 3) : 0), saddle + 12);
       if (dir === 2) g.scale(-1, 1);
       g.drawImage(rider, 0, 0, rider.width, rider.height * frac, -rw / 2, -ph, rw, ph); g.restore();
     };
     const drawHorse = () => {
-      E.shadow(g, P.x, P.y - 1, Math.min(w, h * 1.5) * .38, 7, .3);
-      g.save(); g.translate(P.x, P.y - bob); if (a.moving) g.rotate(Math.sin(a.t * K.step * .5) * .015); if (flip) g.scale(-1, 1);
+      E.shadow(g, P.x, P.y - 1, shadowW(pk, w, h, sc, .38), 7, .3);
+      g.save(); g.translate(P.x, P.y - bob); if (flip) g.scale(-1, 1);
       g.drawImage(img, -w / 2, -h + 3, w, h); g.restore();
     };
-    drawRider(); drawHorse();          // o corpo do cavalo cobre a parte de baixo do cavaleiro
+    // o corpo do cavalo cobre a parte de baixo do cavaleiro; DE COSTAS o cavaleiro vem na frente da cabeça/pescoço do cavalo (senão só a cabeça dele apareceria)
+    if (dir === 1) { drawHorse(); drawRider(); } else { drawRider(); drawHorse(); }
   }
 
   function drawFence(g, tx, ty) {

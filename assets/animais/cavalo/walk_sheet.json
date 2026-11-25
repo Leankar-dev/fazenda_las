@@ -1,0 +1,35 @@
+{
+  "image": "walk_sheet.png",
+  "cell": [
+    184,
+    160
+  ],
+  "columns": 5,
+  "rows": [
+    "right",
+    "left",
+    "down",
+    "up"
+  ],
+  "frames": 5,
+  "anchor": "pés no centro-base da célula (PAD_B px acima da borda inferior)",
+  "padBottom": 2,
+  "bodyHeight": 148,
+  "footprintWidth": {
+    "right": 168,
+    "left": 169,
+    "down": 51,
+    "up": 50
+  },
+  "idleFrame": {
+    "right": 2,
+    "left": 3,
+    "down": 1,
+    "up": 4
+  },
+  "size": [
+    920,
+    640
+  ],
+  "note": "ciclo de caminhada de 5 quadros por direção; \"idle\" = idleFrame (pernas mais juntas). Direções do jogo: 0 baixo(front) · 1 cima(back) · 2 esquerda · 3 direita"
+}

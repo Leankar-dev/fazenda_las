@@ -288,6 +288,44 @@
     },
   };
 
+  /* Cavalo animado (sprite sheet walk_sheet.png: 5 quadros x 4 direções): a sheet carrega e é fatiada em 20 quadros com pés na base; o ciclo avança andando e volta ao
+     repouso parado; montado e solto, nas 4 direções, desenha sem erro; o ícone da loja (busto) carrega */
+  S_['cavalo-sprites'] = {
+    seed() { T.reset(); const st = T.fixtureState('save_v1_atual'); st.owned = { vaca: 0, porco: 0, cavalo: 2 }; T.setMainState(st); },
+    async run() {
+      await bootReady(); $('btnContinue').click(); const G = await gameReady(), A = G.Animals, im = A.IMGS.cavalo, DIRS = ['down', 'up', 'left', 'right'];
+      ok('a sheet carregou inteira (920 x 640)', !!im.sheet && im.sheet.width === 920 && im.sheet.height === 640, im.sheet && im.sheet.width + 'x' + im.sheet.height);
+      ok('20 quadros: 4 direções x 5', !!im.walk && DIRS.every(d => im.walk[d] && im.walk[d].length === 5));
+      const info = f => {      // massa de pixels visíveis: contagem, base (pés), centro de massa em x e para que lado a CABEÇA aponta (topo mais à direita/esquerda do centro)
+        const w = f.width, h = f.height, d = f.getContext('2d').getImageData(0, 0, w, h).data; let n = 0, y0 = h, y1 = -1, sx = 0, hash = 0, edge = 0;
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; if (d[i + 3] > 40) { n++; y0 = Math.min(y0, y); y1 = Math.max(y1, y); sx += x; hash = (hash * 31 + d[i] + d[i + 1] * 7 + d[i + 2] * 13) | 0; if (x < 3 || x >= w - 3) edge++; } }
+        const cx = sx / n; let tn = 0, tx = 0; for (let y = y0; y < y0 + (y1 - y0) * .3; y++) for (let x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 40) { tn++; tx += x; }
+        return { n, y1, cx, hash, edge, head: tn ? tx / tn - cx : 0 };
+      };
+      const all = DIRS.flatMap(d => im.walk[d].map((f, i) => Object.assign(info(f), { d, i })));
+      ok('todos os quadros têm o cavalo (pixels visíveis)', all.every(q => q.n > 2000), JSON.stringify(all.filter(q => q.n <= 2000)));
+      ok('os pés ficam na base da célula (alinhados ao chão)', all.every(q => q.y1 >= 155 && q.y1 <= 158), JSON.stringify(all.map(q => q.y1)));
+      ok('o centro de massa fica no centro da célula (±4 px) e nada encosta nas bordas: a fatia está na grade certa', all.every(q => Math.abs(q.cx - 92) < 4 && q.edge === 0), JSON.stringify(all.map(q => Math.round(q.cx) + '/' + q.edge)));
+      ok('direita: a cabeça aponta para a DIREITA; esquerda: para a ESQUERDA (linhas não trocadas)', all.filter(q => q.d === 'right').every(q => q.head > 15) && all.filter(q => q.d === 'left').every(q => q.head < -15), JSON.stringify(all.filter(q => q.d === 'right' || q.d === 'left').map(q => q.d[0] + Math.round(q.head))));
+      ok('as 4 direções são DIFERENTES entre si (cada linha tem a sua arte)', new Set(all.filter(q => q.i === 0).map(q => q.hash)).size === 4);
+      ok('os 5 quadros de cada direção são DIFERENTES (é uma animação, não um quadro repetido)', DIRS.every(d => new Set(all.filter(q => q.d === d).map(q => q.hash)).size === 5));
+      const h = A.horse; ok('há um cavalo no curral', !!h && h.kind === 'cavalo');
+      h.moving = false; A.update(.05, G.S); ok('parado: fase do ciclo em 0 (quadro de repouso)', h.wp === 0, h.wp);
+      h.moving = true; h.tx = h.x + 400; h.ty = h.y; for (let i = 0; i < 5; i++) A.update(.1, G.S);
+      ok('andando: a fase avança com o tempo (5 quadros/s → ~2,5 em 0,5 s)', h.wp > 2.2 && h.wp < 2.8, h.wp);
+      h.moving = false; A.update(.05, G.S); ok('parou: volta ao repouso', h.wp === 0, h.wp);
+      for (const d of [0, 1, 2, 3]) { h.dir = d; h.moving = d % 2 === 0; h.tx = h.x + 50; h.ty = h.y; steps(G, 6); }
+      ok('solto, nas 4 direções (parado e andando): desenha sem erro', !window.__errs.length, window.__errs.join('|'));
+      G.P.x = h.x + 70; G.P.y = h.y; ok('montar funciona', A.mount(h) && A.isRiding());
+      for (const d of [0, 1, 2, 3]) { G.P.dir = d; steps(G, 8); }
+      ok('montado, nas 4 direções: desenha sem erro', !window.__errs.length, window.__errs.join('|'));
+      A.dismount(); ok('desmontar funciona', !A.isRiding());
+      G.openShop(); await wait(400); const ic = [...document.querySelectorAll('.item img')].find(i => /cavalo\/icon\.png/.test(i.src));
+      ok('a loja mostra o ícone do cavalo (busto 96x96)', !!ic && ic.complete && ic.naturalWidth === 96 && ic.naturalHeight === 96, ic && ic.naturalWidth);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
   /* Fase 2: o MOTIVO da cópia aparece no botão "Restaurar", e restaurar uma cópia que veio de OUTRO slot grava no slot selecionado (slot do envelope = o do destino) */
   S_['restaurar-motivo-slot'] = {
     seed() {

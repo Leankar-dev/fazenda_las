@@ -21,7 +21,7 @@ Para adicionar outro personagem: crie `assets/<pasta>/` com os mesmos 16 sprites
 ## Animais
 - **Cachorro** (já vem com você): passeia sozinho pela fazenda e senta para descansar. Aperte **C** (ou o botão 🐕 no celular) para **chamá-lo**: ele vem correndo e acompanha você por cerca de 50 s, depois volta a passear. Ganha carinho com **E** e todo dia cava um **tesouro** em algum lugar da fazenda (monte de terra com patinha) — cave com **E**.
 - **Curral** (a leste, cercado, com portão a oeste): compre na loja até **4 vacas** (leite diário, ordenhe com **E** quando aparecer o balão), **4 porcos** (carne 2× por dia e trufas) e **2 cavalos**.
-- **Cavalo:** **E** perto dele para montar, **E** de novo para desmontar. Cavalgando você anda quase 2× mais rápido, mas só interage (loja, caixa, poço), sem usar ferramentas.
+- **Cavalo:** **E** perto dele para montar, **E** de novo para desmontar. Ele tem **ciclo de caminhada animado** nas 4 direções (andando solto ou montado; parado fica em pé com as pernas juntas). Cavalgando você anda quase 2× mais rápido, mas só interage (loja, caixa, poço), sem usar ferramentas.
 - **Ordenhar:** chegue perto da vaca com o balão de balde e use as **Luvas (4) + Espaço** (ou **E**). Uma vez por vaca por dia.
 - **Carne do porco:** 2 vezes por dia (ao amanhecer e a partir das 13:00) cada porco dá 1 carne — quando aparecer o balão de presunto, use **E** ou as **Luvas (4) + Espaço**. Carne vende por 30 ◎.
 - **Galinhas:** são 6 e botam ovos 2 vezes por dia (ao amanhecer e ao meio-dia, 13:00). Ovos não coletados da manhã ficam no chão até você dormir.
@@ -72,7 +72,8 @@ Os jogos ficam **só neste navegador** (`localStorage`): limpar os dados do site
 - `assets/fazendeiro/` – sprites do Elias (recortados de `docs/imagem_fazendeiro.jpeg`)
 - `assets/fazendeira/` – sprites da Karen (recortados de `docs/imagem_fazendeira.jpeg`, inclui os chapéus)
 - `assets/tile_*.png` – tiles de terreno compartilhados pelos dois personagens
-- `assets/animais/` – cachorro, vaca, cavalo e porco (8 vistas cada), `props/` (37 acessórios) e `tiles/` (15), recortados de `docs/animais.jpeg`
+- `assets/animais/` – cachorro, vaca e porco (vistas estáticas), `props/` (37 acessórios) e `tiles/` (15), recortados de `docs/animais.jpeg`
+- `assets/animais/cavalo/` – **sprite sheet animada** `walk_sheet.png` (920×640, fundo transparente: **5 quadros do ciclo × 4 direções**, células de 184×160 com os pés no centro-base), `walk_sheet.json` (metadados) e `icon.png` (busto 96×96 da loja). Gerados de `docs/cavalo_sprite_sheet.jpeg` por `python tools/make-horse-sprites.py` (numpy, scipy, opencv, Pillow); o jogo recorta a sheet em 20 quadros ao carregar
 - `animais.js` – curral, comportamento dos animais e montaria
 - `art.js` – arte procedural complementar (plantações, celeiro, árvores, galinhas...)
 - `save.js` – persistência (`SaveManager`): salvar/carregar, cópias de segurança, exportar/importar, proteção contra duas abas (aviso por `rev` + bloqueio de jogo por Web Locks), sonda do storage, `persist()` e configuração de áudio

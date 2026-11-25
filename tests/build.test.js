@@ -67,6 +67,33 @@ test('build: falha (código 1) se o index.html deixar de citar um arquivo de có
   assert.strictEqual(ok.status, 0, ok.stderr);
 });
 
+/* ============================ sprites do cavalo (sheet) ============================ */
+const pngInfo = f => { const b = fs.readFileSync(f); assert.strictEqual(b.toString('latin1', 1, 4), 'PNG', f); return { w: b.readUInt32BE(16), h: b.readUInt32BE(20), colorType: b[25] }; };
+test('cavalo: walk_sheet.png, walk_sheet.json e as constantes HORSE do animais.js batem entre si (tamanho, grade, pegada da sombra, quadro de repouso)', () => {
+  const dir = path.join(ROOT, 'assets', 'animais', 'cavalo'), meta = JSON.parse(fs.readFileSync(path.join(dir, 'walk_sheet.json'), 'utf8')), png = pngInfo(path.join(dir, 'walk_sheet.png'));
+  assert.deepStrictEqual([png.w, png.h], meta.size, 'tamanho do PNG == json'); assert.strictEqual(png.colorType, 6, 'RGBA (fundo transparente)');
+  assert.deepStrictEqual([meta.cell[0] * meta.columns, meta.cell[1] * meta.rows.length], meta.size, 'grade uniforme: colunas x célula');
+  const src = fs.readFileSync(path.join(ROOT, 'animais.js'), 'utf8'), blk = /const HORSE = (\{[\s\S]*?\n  \});/.exec(src); assert.ok(blk, 'bloco HORSE no animais.js');
+  const H = new Function('return ' + blk[1])();
+  assert.deepStrictEqual(H.cell, meta.cell); assert.strictEqual(H.cols, meta.columns); assert.strictEqual(H.ref, meta.bodyHeight);
+  assert.deepStrictEqual(H.foot, meta.footprintWidth); assert.deepStrictEqual(H.idle, meta.idleFrame);
+  assert.deepStrictEqual(Object.keys(H.rows), meta.rows, 'ordem das linhas'); assert.deepStrictEqual(Object.values(H.rows), meta.rows.map((_, i) => i));
+  for (const d of meta.rows) assert.ok(H.idle[d] >= 0 && H.idle[d] < meta.columns);
+  const ic = pngInfo(path.join(dir, 'icon.png')); assert.deepStrictEqual([ic.w, ic.h], [96, 96], 'ícone da loja 96x96');
+});
+test('cavalo: os 7 PNGs antigos foram removidos e a loja usa o ícone novo', () => {
+  const dir = path.join(ROOT, 'assets', 'animais', 'cavalo'), left = fs.readdirSync(dir).sort();
+  assert.deepStrictEqual(left, ['icon.png', 'walk_sheet.json', 'walk_sheet.png'], 'sobrou arquivo antigo: ' + left);
+  const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'); assert.ok(game.includes("cavalo/icon.png") && !/cavalo\/(front|back|profile|bottomup)/.test(game + fs.readFileSync(path.join(ROOT, 'animais.js'), 'utf8')), 'ninguém cita os sprites antigos');
+});
+test('assets: toda imagem citada por literal no código existe com a CAIXA exata (o Pages é case-sensitive, o Windows não)', () => {
+  const real = new Set(listAll(path.join(ROOT, 'assets')).map(f => 'assets/' + f)); let n = 0;
+  for (const f of ['game.js', 'animais.js', 'art.js', 'style.css', 'index.html']) {
+    for (const m of fs.readFileSync(path.join(ROOT, f), 'utf8').matchAll(/assets\/[A-Za-z0-9_\-./]+\.(?:png|json)/g)) { n++; assert.ok(real.has(m[0]), f + ' cita ' + m[0] + ' que não existe (confira a caixa)'); }
+  }
+  assert.ok(n >= 4, 'achou poucas referências: ' + n);
+});
+
 /* ============================ service worker (sandbox) ============================ */
 const ORIGIN = 'https://leankar-dev.github.io', BASE = ORIGIN + '/fazenda_las/';
 class Req { constructor(u, init = {}) { this.url = new URL(u, BASE).href; this.method = init.method || 'GET'; this.mode = init.mode || 'cors'; this.cache = init.cache || 'default'; } }

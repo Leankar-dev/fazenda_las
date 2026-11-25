@@ -77,7 +77,7 @@
   const ANIMAL_SHOP = {
     vaca:   { name: 'Vaca',   cost: 260, max: 4, img: 'assets/animais/vaca/front34.png',   info: 'Dá leite todo dia (vende 42 ◎). Ordenhe com E.' },
     porco:  { name: 'Porco',  cost: 180, max: 4, img: 'assets/animais/porco/front34.png',  info: 'Dá carne 2× por dia (vende 30 ◎) e acha trufas (80 ◎). Pegue com E.' },
-    cavalo: { name: 'Cavalo', cost: 650, max: 2, img: 'assets/animais/cavalo/front34.png', info: 'Monte com E e cavalgue quase 2× mais rápido.' },
+    cavalo: { name: 'Cavalo', cost: 650, max: 2, img: 'assets/animais/cavalo/icon.png', info: 'Monte com E e cavalgue quase 2× mais rápido.' },
   };
   const GOALS = [
     { at: 400,   reward: { seeds: { tomate: 6 } },  text: 'Sementes de tomate liberadas! (+6)' },
