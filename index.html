@@ -28,6 +28,7 @@
       <div class="goalLabel" id="goalLabel">Meta</div>
       <div class="goalbar"><i id="goalBar"></i></div>
       <div class="btnRow">
+        <button id="saveInd" data-state="ok" title="Salvamento" aria-label="Estado do salvamento">💾</button>
         <button id="btnMusic" title="Música (M)">🎵</button>
         <button id="btnMute" title="Efeitos sonoros (N)">🔊</button>
         <button id="btnMenu" title="Menu (Esc)">☰</button>
@@ -60,6 +61,13 @@
     </div>
   </div>
 
+  <!-- faixa de aviso do salvamento (2b): falha de gravação (vermelha) ou sugestão de backup ao atingir uma meta (verde) -->
+  <div id="saveBanner" class="hidden" role="alert">
+    <span id="sbMsg"></span>
+    <button id="sbExport" class="mb">Exportar agora</button>
+    <button id="sbClose" class="mb alt">Dispensar</button>
+  </div>
+
   <div id="modal" class="hidden">
     <div id="modalBox"></div>
   </div>
@@ -75,11 +83,29 @@
         <p class="sub">Ara, plante, regue, colha e venda. Escolha entre Elias e Karen e transforme este pedaço de terra
           na fazenda dos seus sonhos.
         </p>
+        <div id="storageWarn" class="saveProblem hidden" role="alert">
+          <b id="swTitle">⚠ Este navegador não está deixando salvar</b>
+          <span id="swMsg"></span>
+          <div class="spBtns"><button id="btnSwClose" class="big alt">Entendi</button></div>
+        </div>
         <div id="slotCards" class="slotCards" role="group" aria-label="Jogos salvos"></div>
         <div class="titleBtns">
           <button id="btnContinue" class="big hidden" disabled>Continuar</button>
           <button id="btnNew" class="big" disabled>Novo jogo</button>
           <button id="btnDelete" class="big alt hidden" disabled>Apagar</button>
+          <button id="btnExport" class="big alt hidden" disabled title="Baixa o jogo escolhido como um arquivo .json (backup ou para levar a outro aparelho)">Exportar</button>
+          <button id="btnImport" class="big alt" disabled title="Carrega um jogo de um arquivo .json exportado">Importar</button>
+          <input type="file" id="fileImport" class="hidden" accept=".json,application/json" tabindex="-1" aria-label="Arquivo de jogo salvo (.json)">
+        </div>
+        <div id="xferBox" class="xferBox hidden" role="alert">
+          <b id="xferTitle"></b>
+          <span id="xferMsg"></span>
+          <label id="xferSlotRow" class="hidden">Importar para: <select id="xferSlot"></select></label>
+          <div class="spBtns">
+            <button id="btnXferYes" class="big hidden"></button>
+            <button id="btnXferDl" class="big alt hidden">Baixar cópia (.json)</button>
+            <button id="btnXferNo" class="big alt">Cancelar</button>
+          </div>
         </div>
         <div id="confirmDel" class="confirmNew hidden">
           <span id="delMsg">Apagar este jogo?</span>
@@ -116,6 +142,19 @@
       <p>Dê um nome a cada um e escolha com quem você quer cuidar da fazenda. Os dois têm as mesmas habilidades.</p>
       <div class="cards" id="cards"></div>
       <button id="btnBack" class="big alt">Voltar</button>
+    </div>
+  </div>
+
+  <!-- bloqueio de jogo (2c): esta aba não é a que joga. Cobre tudo: nada atrás dela grava -->
+  <div id="lockOverlay" class="hidden" role="alertdialog" aria-modal="true" aria-labelledby="lkTitle">
+    <div class="lockBox">
+      <h2 id="lkTitle"></h2>
+      <p id="lkMsg"></p>
+      <div class="spBtns">
+        <button id="lkTake" class="big hidden">Assumir aqui</button>
+        <button id="lkDl" class="big alt hidden">Baixar meu jogo (.json)</button>
+        <button id="lkReload" class="big alt hidden">Recarregar</button>
+      </div>
     </div>
   </div>
 

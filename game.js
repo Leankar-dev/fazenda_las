@@ -514,9 +514,9 @@
   // Grava o jogo. Devolve { ok: true } ou { ok: false, error }. Em falha (cota cheia, modo privado, storage bloqueado)
   // avisa o jogador: o autosave avisa uma vez e repete no máximo a cada 60 s; o botão "Salvar" (manual) sempre avisa.
   let saveFailing = false, lastSaveWarn = -1e9;
+  const isQuotaError = e => !!e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014);
   function saveErrorText(e) {
-    const quota = e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014);
-    return quota ? 'Sem espaço no navegador para salvar! Libere espaço (dados do site) — o progresso NÃO está sendo salvo.'
+    return isQuotaError(e) ? 'Sem espaço no navegador para salvar! Libere espaço (dados do site) — o progresso NÃO está sendo salvo.'
       : 'O navegador não deixou salvar (modo privado ou dados do site bloqueados) — o progresso NÃO está sendo salvo.';
   }
   // `pt`/`pk` das plantas são só da animação de brotar/crescer (dependem de `time`, que reinicia a cada sessão): não vão para o save.
@@ -533,19 +533,102 @@
   function save(manual) {
     if (!S) return { ok: false, error: new Error('nenhum jogo em andamento') };
     const r = SaveManager.save(S);
-    if (r.ok) { if (saveFailing) { saveFailing = false; toast('Salvamento restabelecido ✓', 'good'); } return r; }
+    if (r.ok) { lastSaveAt = Date.now(); if (saveFailing) { saveFailing = false; toast('Salvamento restabelecido ✓', 'good'); } setSaveState('ok'); return r; }
     if (r.error && r.error.name === 'Conflict') {          // outra aba salvou (ou apagou) depois: esta aba não grava mais (nem em pagehide/visibilitychange)
+      setSaveState('stale');
       if (manual === true) toast('⚠ Este jogo foi salvo em outra aba — esta aba não salva mais.', 'bad');
       return r;
     }
+    if (r.error && r.error.name === 'LockLost') {          // 2c: outra aba está com o bloqueio de jogo (a tela "assumiu o jogo" já explica); esta aba não grava
+      setSaveState('locked');
+      if (manual === true) toast('⚠ Outra aba está com o jogo — esta aba não salva.', 'bad');
+      return r;
+    }
     if (r.error && r.error.name === 'FutureSchema') {      // o slot tem um save de versão MAIS NOVA: nunca é sobrescrito
+      setSaveState('future');
       if (manual === true || time - lastSaveWarn > 60) { lastSaveWarn = time; toast('⚠ Este jogo está salvo numa versão mais nova — esta aba não vai sobrescrevê-lo. Atualize a página (Ctrl+F5).', 'bad'); Snd.error(); }
       return r;
     }
-    saveFailing = true;
+    saveFailing = true; setSaveState('fail', saveErrorText(r.error));
     if (manual === true || time - lastSaveWarn > 60) { lastSaveWarn = time; toast('⚠ ' + saveErrorText(r.error), 'bad'); Snd.error(); }
     return r;
   }
+  /* ---- indicador de salvamento e faixa de aviso (Fase 2b) ----
+     Um único estado diz o que o jogador precisa saber: ok (✓) · fail (não está salvando: vermelho + faixa "exporte agora") · stale (outra aba salvou) ·
+     future (save de versão mais nova) · locked (outra aba está com o jogo). Só `fail` abre a faixa; "Dispensar" a esconde até o salvamento voltar e falhar de novo. */
+  let saveState = 'ok', lastSaveAt = 0, bannerDismissed = false, lastExportAt = 0, durState = null;
+  const clockOf = ms => new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const SAVE_STATES = {
+    ok: { ind: 'ok', tip: () => lastSaveAt ? 'Jogo salvo às ' + clockOf(lastSaveAt) : 'Salvamento ativo' },
+    fail: { ind: 'bad', tip: d => d + ' Clique para abrir o menu e exportar o jogo.' },
+    stale: { ind: 'warn', tip: () => 'Este jogo foi salvo em outra aba — esta aba não salva.' },
+    future: { ind: 'warn', tip: () => 'Este jogo está salvo numa versão mais nova — esta aba não o sobrescreve.' },
+    locked: { ind: 'bad', tip: () => 'Outra aba está com o jogo — esta aba não salva.' },
+  };
+  function showBanner(kind, msg) {
+    const b = $('saveBanner'); b.dataset.kind = kind; b.classList.toggle('tip', kind === 'tip');
+    $('sbMsg').textContent = msg; $('sbExport').textContent = kind === 'tip' ? 'Exportar' : 'Exportar agora'; b.classList.remove('hidden');
+  }
+  function hideBanner(kind) { const b = $('saveBanner'); if (!kind || b.dataset.kind === kind) { b.classList.add('hidden'); delete b.dataset.kind; } }
+  function setSaveState(st, detail) {
+    const def = SAVE_STATES[st], was = saveState, el = $('saveInd'), tip = def.tip(detail); saveState = st;
+    el.dataset.state = def.ind; el.title = tip; el.setAttribute('aria-label', 'Salvamento: ' + tip);
+    if (st === 'fail') { if (was !== 'fail') bannerDismissed = false; if (!bannerDismissed) showBanner('fail', '⚠ ' + detail + ' Exporte o jogo para não perdê-lo.'); }
+    else hideBanner('fail');
+  }
+  // baixa o jogo EM MEMÓRIA (o que o jogador vê), mesmo se esta aba não puder gravar (aba velha, sem espaço): é também a saída de emergência
+  function exportCurrent() {
+    try { const fn = saveFileName(); downloadText(fn, SaveManager.exportText(S)); lastExportAt = Date.now(); toast('Jogo exportado: ' + fn, 'good'); return true; }
+    catch (e) { console.error(e); toast('⚠ Não foi possível exportar o jogo.', 'bad'); return false; }
+  }
+  // metas são os melhores momentos para lembrar de um backup (o jogador acabou de conquistar algo); não insiste se acabou de exportar ou se há um aviso de falha
+  function suggestBackup(gl) {
+    if (Date.now() - lastExportAt < 600000) return;
+    setTimeout(() => {
+      if (!running || saveState === 'fail' || $('saveBanner').dataset.kind === 'fail') return;
+      showBanner('tip', '💾 Meta de ' + fmt(gl.at) + ' ◎ atingida! Que tal guardar um backup do seu jogo? Ele protege contra a limpeza do navegador e leva o jogo para outro aparelho.');
+    }, 3500);
+  }
+  $('sbExport').addEventListener('click', () => { if (running && exportCurrent() && $('saveBanner').dataset.kind === 'tip') hideBanner('tip'); });
+  $('sbClose').addEventListener('click', () => { if ($('saveBanner').dataset.kind === 'fail') bannerDismissed = true; hideBanner(); });
+  $('saveInd').addEventListener('click', () => { if (running && !modalOpen) openMenu(); });
+  // `navigator.storage.persist()`: só depois da 1ª interação (o Firefox pergunta ao jogador; no Chrome decide sozinho). O menu mostra o resultado.
+  function durabilityText() {
+    if (!durState) return '';
+    if (!durState.supported) return '💾 Este navegador não informa se protege os dados do site: exporte um backup de vez em quando (Exportar).';
+    if (durState.persisted) return '🔒 Armazenamento protegido: o navegador não apaga o jogo sozinho para liberar espaço.';
+    return '⚠ O navegador pode apagar os dados do site se faltar espaço (no iPhone, também depois de ~7 dias sem abrir). Guarde um backup com Exportar.';
+  }
+  function askPersist() { return SaveManager.durability.request().then(r => { durState = r; return r; }); }
+
+  /* ---- bloqueio de jogo: só UMA aba joga (Web Locks, Fase 2c; a lógica mora em SaveManager.playLock, no save.js) ----
+     Aqui fica a INTERFACE. A aba sem o bloqueio nunca grava (SaveManager.fence). Três situações, uma tela (#lockOverlay):
+       blocked  esta aba acabou de abrir e outra já joga → "Assumir aqui" (a outra salva e para) ou esperar a outra fechar (entra sozinho)
+       yield    outra aba pediu o jogo: esta SALVOU e parou
+       lost     outra aba tomou o jogo sem esperar (esta não respondeu): esta parou de salvar; oferece baixar o que está na memória */
+  const LOCK_TEXT = {
+    blocked: ['⚠ O FAZENDA LAS já está aberto em outra aba', 'Só uma aba joga por vez — senão os dois jogos se sobrescreveriam. Feche a outra aba (esta entra sozinha) ou clique em "Assumir aqui": a outra aba salva o jogo e para.'],
+    yield: ['O jogo foi aberto em outra aba', 'Esta aba salvou o seu jogo e parou, para não sobrescrever a outra. Para jogar aqui de novo, recarregue a página e use "Assumir aqui".'],
+    lost: ['Outra aba assumiu o jogo', 'Outra aba pediu o jogo e esta não respondeu a tempo, então ela passou a ser a que joga. Esta aba parou de salvar — o que você fez depois do último salvamento automático pode não estar no jogo salvo.'],
+  };
+  function showLock(kind, o = {}) {
+    $('lkTitle').textContent = LOCK_TEXT[kind][0];
+    $('lkMsg').textContent = LOCK_TEXT[kind][1] + (kind === 'yield' && o.saveOk === false ? ' ⚠ Não foi possível salvar antes de parar: baixe o seu jogo para não perder o progresso.' : '');
+    $('lkTake').classList.toggle('hidden', kind !== 'blocked'); $('lkTake').disabled = false;
+    $('lkDl').classList.toggle('hidden', !(kind !== 'blocked' && S)); $('lkReload').classList.toggle('hidden', kind === 'blocked');
+    $('lockOverlay').classList.remove('hidden');
+  }
+  // outra aba ficou com o jogo: salva (se foi cedido de boa), para tudo e mostra a tela. A cerca do SaveManager já impede qualquer gravação daqui em diante.
+  function haltPlay(kind) {
+    let saveOk = true;
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = 0; }
+    if (kind === 'yield' && running && S) saveOk = save().ok;
+    running = false; paused = true; Snd.suspend();
+    if (S) setSaveState('locked');
+    showLock(kind, { saveOk });
+  }
+  $('lkDl').addEventListener('click', () => { try { downloadText(saveFileName('copia'), SaveManager.exportText(S)); } catch (e) { console.error(e); $('lkMsg').textContent = '⚠ Não foi possível gerar o arquivo.'; } });
+  $('lkReload').addEventListener('click', () => { running = false; location.reload(); });
   function showStaleModal() {
     staleShown = true; currentModal = 'stale';
     setModal(`<h2>⚠ Jogo aberto em outra aba</h2><p>Outra aba salvou este jogo <b>depois</b> de você (ou o apagou). Para não desfazer o que ela fez, <b>esta aba parou de salvar</b>.</p>
@@ -649,7 +732,20 @@
     shape: 'O save está incompleto (faltam dados do mapa).',
     start: 'O save foi lido, mas o jogo não conseguiu iniciá-lo — o save não foi alterado.',
   };
-  const saveFileName = () => 'fazenda-las-save-' + new Date().toISOString().slice(0, 10) + '.json';
+  const IMPORT_PROBLEMS = {
+    empty: 'O arquivo está vazio.',
+    size: 'O arquivo é grande demais para ser um jogo salvo do FAZENDA LAS.',
+    json: 'O arquivo não é um jogo salvo do FAZENDA LAS (ou está corrompido ou incompleto).',
+    crc: 'O arquivo está danificado ou foi alterado (a verificação de integridade falhou).',
+    future: 'O arquivo é de uma versão mais nova do jogo. Atualize a página (Ctrl+F5) e tente de novo.',
+    version: 'O arquivo é de uma versão do jogo que este código não reconhece.',
+    shape: 'O arquivo está incompleto (faltam dados do mapa).',
+  };
+  // fazenda-las-AAAA-MM-DD-slotN[-sufixo].json — a data é a LOCAL (toISOString seria UTC: à noite no Brasil já seria "amanhã")
+  const saveFileName = (suffix, slot) => {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    return 'fazenda-las-' + d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + '-slot' + (slot || SaveManager.slot()) + (suffix ? '-' + suffix : '') + '.json';
+  };
   // caixa "Problema com o jogo salvo" da tela inicial. found: { status:'invalid', reason, raw, backedUp, detail } ou { status:'none' } (só oferece restaurar)
   function renderSaveProblem(found, good) {
     const bad = found.status === 'invalid';
@@ -658,7 +754,7 @@
     $('spMsg').textContent = bad ? SAVE_PROBLEMS[found.reason] + (found.detail ? ' (' + found.detail + ')' : '') + ' ' + (found.backedUp ? 'Uma cópia de segurança foi guardada neste navegador.' : 'Não foi possível guardar uma cópia neste navegador — baixe o arquivo antes de começar de novo!')
       : 'Não há jogo salvo, mas existe uma cópia de segurança.';
     ex.classList.toggle('hidden', !(bad && found.raw)); br.classList.toggle('hidden', !good);
-    if (bad && found.raw) ex.onclick = () => downloadText(saveFileName(), found.raw);
+    if (bad && found.raw) ex.onclick = () => downloadText(saveFileName('copia'), found.raw);
     if (good) {
       const label = 'Restaurar cópia (' + backupLabel(good) + ')'; let forced = false;
       br.textContent = label;
@@ -1097,7 +1193,7 @@
       const gl = GOALS[S.goal]; S.goal++;
       if (gl.reward.seeds) for (const k in gl.reward.seeds) S.seeds[k] += gl.reward.seeds[k];
       if (gl.reward.gold) S.gold += gl.reward.gold;
-      Snd.level(); toast('🏆 Meta de ' + fmt(gl.at) + ' ◎ atingida! ' + gl.text, 'gold');
+      Snd.level(); toast('🏆 Meta de ' + fmt(gl.at) + ' ◎ atingida! ' + gl.text, 'gold'); suggestBackup(gl);
       if (S.goal === GOALS.length && !S.won) { S.won = true; setTimeout(showWin, 1200); }
     }
   }
@@ -1258,11 +1354,12 @@
       <b>Ferramentas:</b> <kbd>1</kbd> Forcado · <kbd>2</kbd> Regador · <kbd>3</kbd> Sementes · <kbd>4</kbd> Luvas · <kbd>5</kbd> Picareta · <kbd>6</kbd> Machado (ou roda do mouse)<br>
       <b>Usar:</b> <kbd>Espaço</kbd> ou clique no terreno próximo &nbsp; <b>Interagir:</b> <kbd>E</kbd> &nbsp; <b>Trocar semente:</b> <kbd>Q</kbd> &nbsp; <b>Chamar o cachorro:</b> <kbd>C</kbd><br>
       <b>Música:</b> <kbd>M</kbd> &nbsp; <b>Efeitos:</b> <kbd>N</kbd> &nbsp; <b>Pausa:</b> <kbd>Esc</kbd></div>
+      ${durabilityText() ? `<div class="help" id="durLine">${durabilityText()}</div>` : ''}
       <h3>Como jogar</h3>
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
       ④ depois das 18:00, durma na porta do celeiro para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
       Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. As galinhas botam ovos 2× por dia (manhã e meio-dia) e os porcos dão carne 2× por dia. Dias com chuva regam tudo sozinhos!</div>
-      <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="switchslot">Trocar de jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb" data-a="close">Continuar</button></div>`);
+      <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="switchslot">Trocar de jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb alt" data-a="export" title="Baixa o jogo como um arquivo .json (backup ou para levar a outro aparelho)">Exportar</button><button class="mb" data-a="close">Continuar</button></div>`);
   }
 
   function openCharPicker() {
@@ -1319,6 +1416,7 @@
     }
     else if (a === 'char') { const k = b.dataset.k; if (CHARACTERS[k]) { S.char = k; setCharacter(k); buildHotbar(); Snd.pop(); toast('Agora você joga com ' + CHAR.name + '!', 'good'); save(); closeModal(); } }
     else if (a === 'save') { if (save(true).ok) toast('Jogo salvo!', 'good'); }
+    else if (a === 'export') exportCurrent();
     else if (a === 'resetask') { currentModal = 'reset'; setModal(`<h2>Novo jogo</h2><p>Começar um novo jogo? O jogo atual será substituído (uma cópia de segurança fica guardada neste navegador).</p><div class="modalBtns"><button class="mb red" data-a="reset">Sim, apagar</button><button class="mb" data-a="close">Cancelar</button></div>`); }
     else if (a === 'reset' || a === 'resetforce') {       // R1: guarda cópia do jogo atual ANTES de apagar
       if (a === 'reset') save();                           // inclui o que foi feito desde o último autosave (se esta aba ainda pode salvar)
@@ -1341,9 +1439,9 @@
       }
       // outro erro (cota, bloqueio): fica no jogo — o toast de save() já avisou
     }
-    else if (a === 'leavedl') { if (pendingLeaveRaw !== null) downloadText(saveFileName(), pendingLeaveRaw); }
+    else if (a === 'leavedl') { if (pendingLeaveRaw !== null) downloadText(saveFileName('copia'), pendingLeaveRaw); }
     else if (a === 'leaveforce') { running = false; location.reload(); }
-    else if (a === 'resetdl') { if (pendingResetRaw !== null) downloadText(saveFileName(), pendingResetRaw); }
+    else if (a === 'resetdl') { if (pendingResetRaw !== null) downloadText(saveFileName('copia'), pendingResetRaw); }
     else if (a === 'stalereload') { running = false; location.reload(); }
     else if (a === 'staleuse') {       // R2: assume o controle: guarda o que a outra aba salvou e volta a gravar daqui
       SaveManager.session.takeOver();       // guarda o que a outra aba salvou, assume o rev dela e permite recriar um save que ela APAGOU (escolha do jogador)
@@ -1554,6 +1652,7 @@
   /* ---------------- atualização ---------------- */
   function update(dt) {
     time += dt;
+    if (SaveManager.session.isStale() && saveState !== 'stale' && saveState !== 'locked') setSaveState('stale');      // o indicador avisa já (o evento `storage` marca a aba velha antes do próximo save)
     if (SaveManager.session.isStale() && !staleShown && !modalOpen && !sleeping) showStaleModal();      // R2: avisa quando der (não por cima de loja/sono)
     if (!paused) {
       S.min += dt * MIN_PER_SEC;
@@ -2136,9 +2235,11 @@
     hudCache.bag = undefined; hudCache.slot2 = undefined;
   }
 
+  let startStorageErr = null;      // resultado da sonda do storage no boot: se falhou, o jogo já começa com o aviso "não está salvando"
   function startGame(loadIt, charId, names) {
     Snd.init();
     const loaded = loadIt ? SaveManager.load() : null;
+    if (loadIt && !(loaded && loaded.status === 'ok')) return false;      // N5: o jogo do slot mudou desde que o título foi montado (outra aba o apagou/corrompeu): NÃO começa um jogo novo em silêncio
     const prev = loadIt ? null : Object.assign(SaveManager.peek(), { raw: SaveManager.peekBest().raw });      // jogo novo: o save anterior só é substituído DEPOIS que o jogo novo iniciar (e com cópia)
     SaveManager.session.reset(); staleShown = false;
     S = loaded && loaded.status === 'ok' ? loaded.state : newState();
@@ -2165,6 +2266,8 @@
     Snd.startMusic(); Snd.setMood(S.rain ? 'rain' : 'day', S.rain);
     $('title').classList.add('hidden'); $('hud').classList.remove('hidden');
     running = true; paused = false; modalOpen = false;
+    hideBanner(); bannerDismissed = false; lastSaveAt = 0; saveFailing = false; setSaveState('ok');
+    if (startStorageErr) { saveFailing = true; setSaveState('fail', saveErrorText(startStorageErr)); }      // a sonda do boot já viu que o storage não funciona
     if (!loadIt || S.day === 1) toast('Bem-vindo à fazenda, ' + CHAR.name + '! 🌾', 'good');
     if (S.rain) toast('🌧️ Hoje está chovendo — as plantas já estão regadas.');
     if (loadIt) { SaveManager.session.adopt(loaded); if (loaded.recovered) toast('⚠ O save principal estava danificado — recuperamos a versão anterior. Uma cópia do danificado ficou guardada.', 'bad'); if (loaded.repaired) toast('⚠ O save tinha dados inválidos que foram corrigidos. Uma cópia do original ficou guardada.', 'bad'); }
@@ -2211,13 +2314,55 @@
       Art.init(); setCharacter('fazendeiro'); makeCloudSprites();
       $('btnMusic').textContent = Snd.musicOn ? '🎵' : '🔕'; $('btnMute').textContent = Snd.muted ? '🔇' : '🔊';
       status.classList.add('hidden');
+      /* Fase 2c — bloqueio de jogo ANTES de ler qualquer coisa do storage: uma aba que não joga não inicia, não lê slots para mostrar e não grava. */
+      const lock = SaveManager.playLock;
+      SaveManager.fence(lock.allowed);
+      lock.onYield(() => haltPlay('yield'));      // outra aba pediu o jogo (salva e para; o bloqueio é solto DEPOIS disto)
+      lock.onLost(() => haltPlay('lost'));        // outra aba tomou o jogo sem esperar
+      if (await lock.acquire() === 'blocked') {
+        showLock('blocked');
+        await new Promise(resolve => {            // entra quando a outra aba fechar (whenAvailable) ou quando o jogador pedir (Assumir aqui)
+          lock.whenAvailable().then(ok => { if (ok) resolve(); });
+          $('lkTake').onclick = async () => {
+            $('lkTake').disabled = true; $('lkMsg').textContent = 'Pedindo o jogo à outra aba…';
+            if (await lock.takeOver() === 'held') resolve();
+            else { $('lkMsg').textContent = '⚠ Não foi possível assumir o jogo. Feche a outra aba e tente de novo.'; $('lkTake').disabled = false; }
+          };
+        });
+        $('lockOverlay').classList.add('hidden');
+      }
+      /* Fase 2b — o storage funciona? (modo privado, dados do site bloqueados, cota cheia): avisa JÁ, antes de o jogador perder progresso */
+      const probe = SaveManager.probe();
+      const storageErr = probe.ok ? null : probe.error;
+      if (storageErr) {
+        $('swMsg').textContent = saveErrorText(storageErr) + ' Você ainda pode jogar e usar Exportar (☰) para baixar o jogo; ou abra numa janela normal (não anônima).';
+        $('storageWarn').classList.remove('hidden');
+        $('btnSwClose').onclick = () => $('storageWarn').classList.add('hidden');
+      }
+      startStorageErr = storageErr;
+      SaveManager.durability.status().then(s => { if (!durState) durState = s; });
+      // `persist()` só depois da 1ª interação do jogador (nunca no carregamento: o Firefox abre uma pergunta)
+      const firstTouch = () => { document.removeEventListener('pointerdown', firstTouch, true); document.removeEventListener('keydown', firstTouch, true); askPersist(); };
+      document.addEventListener('pointerdown', firstTouch, true); document.addEventListener('keydown', firstTouch, true);
       // 3 jogos salvos: `sel` é o cartão escolhido; Continuar / Novo jogo / Apagar agem sobre ele (o SaveManager trabalha no slot em uso)
       let cards = SaveManager.slots(), sel = 1, found = { status: 'none' }, has = false, bad = false, delForced = false;
+      // Caixa de exportar/importar (#xferBox). `pending` = arquivo lido esperando confirmação · `xferForce` = o jogador aceitou importar sem cópia do jogo atual
+      let pending = null, xferForce = false, xferRaw = null;
+      const xferClose = () => { $('xferBox').classList.add('hidden'); pending = null; xferForce = false; xferRaw = null; };
+      const xferOpen = o => {      // { title, msg, err, pick, yes, dl, no }
+        for (const id of ['confirmNew', 'confirmDel', 'saveProblem']) $(id).classList.add('hidden');
+        $('xferBox').classList.toggle('err', !!o.err); $('xferBox').classList.remove('hidden');
+        $('xferTitle').textContent = o.title; $('xferMsg').textContent = o.msg;
+        $('xferSlotRow').classList.toggle('hidden', !o.pick);
+        $('btnXferYes').classList.toggle('hidden', !o.yes); if (o.yes) $('btnXferYes').textContent = o.yes;
+        $('btnXferDl').classList.toggle('hidden', !o.dl); $('btnXferNo').textContent = o.no || 'Cancelar';
+      };
       const selectSlot = n => {
         sel = n; SaveManager.useSlot(n); found = SaveManager.load(); has = found.status === 'ok'; bad = found.status === 'invalid';
         for (const id of ['confirmNew', 'confirmDel', 'saveProblem']) $(id).classList.add('hidden');
-        eraseForced = false; delForced = false;
+        xferClose(); eraseForced = false; delForced = false;
         $('btnContinue').classList.toggle('hidden', !has); $('btnDelete').classList.toggle('hidden', !(has || bad));
+        $('btnExport').classList.toggle('hidden', !(has || (bad && found.reason === 'future')));      // um save de versão mais nova também se exporta (cópia fiel)
         // sem jogo neste slot: só oferece a cópia de segurança se NENHUM slot tem jogo (senão cada slot vazio mostraria o aviso)
         const offer = found.status === 'ok' || (found.status === 'none' && cards.some(c => c.status !== 'empty')) ? null : SaveManager.copies.list().find(b => b.info.status === 'ok');
         renderSaveProblem(found, offer);
@@ -2232,10 +2377,18 @@
       $('cards').innerHTML = CHAR_IDS.map(id => cardHtml(CHARACTERS[id], false, true)).join('');
       const showSelect = on => { $('charSelect').classList.toggle('hidden', !on); $('titleBox').classList.toggle('hidden', on); };
       // mostra o indicador de progresso e só então gera o mapa (que é pesado e congela a tela por um instante)
+      const staleTitle = () => {      // N5: "Continuar" achou o slot diferente do cartão: atualiza os cartões e conta o que houve
+        cards = SaveManager.slots(); selectSlot(sel);
+        if ($('saveProblem').classList.contains('hidden')) {      // slot agora vazio: selectSlot não mostra caixa
+          $('spMsg').textContent = 'O Jogo ' + sel + ' mudou em outra aba (foi apagado) e não pôde ser aberto. A lista foi atualizada.';
+          $('btnSpExport').classList.add('hidden'); $('btnSpRestore').classList.add('hidden');
+          $('btnSpClose').onclick = () => $('saveProblem').classList.add('hidden'); $('saveProblem').classList.remove('hidden');
+        }
+      };
       const begin = (loadIt, charId, names) => {
         $('busy').classList.remove('hidden');
         requestAnimationFrame(() => setTimeout(() => {
-          try { startGame(loadIt, charId, names); }
+          try { if (startGame(loadIt, charId, names) === false) staleTitle(); }
           catch (e) {
             console.error(e); showSelect(false);
             if (loadIt) {      // R3: o save passou na leitura mas o jogo não conseguiu iniciá-lo: guarda cópia e oferece baixar (recarregar não resolve)
@@ -2260,6 +2413,7 @@
       $('btnContinue').onclick = () => begin(true);
       // confirmação na própria tela (confirm() do navegador pode estar bloqueado e deixava o botão "morto")
       $('btnNew').onclick = () => {
+        xferClose();
         if (!has && !bad) { showSelect(true); return; }
         eraseForced = false; $('btnYes').textContent = 'Sim, apagar'; $('btnNewDl').classList.add('hidden'); $('confirmDel').classList.add('hidden');
         $('confirmMsg').textContent = has ? 'Isso substituirá o jogo salvo (uma cópia de segurança fica guardada neste navegador). Começar do zero?'
@@ -2271,7 +2425,7 @@
         if (raw !== null && !eraseForced && !SaveManager.copies.add(raw)) {       // R1: não coube a cópia — oferece baixar antes de apagar
           eraseForced = true;
           $('confirmMsg').textContent = 'Não foi possível guardar uma cópia do jogo atual (sem espaço no navegador). Baixe o save antes ou apague mesmo assim.';
-          $('btnYes').textContent = 'Apagar mesmo assim'; $('btnNewDl').classList.remove('hidden'); $('btnNewDl').onclick = () => downloadText(saveFileName(), raw);
+          $('btnYes').textContent = 'Apagar mesmo assim'; $('btnNewDl').classList.remove('hidden'); $('btnNewDl').onclick = () => downloadText(saveFileName('copia'), raw);
           return;
         }
         $('confirmNew').classList.add('hidden'); showSelect(true);
@@ -2279,7 +2433,7 @@
       $('btnNo').onclick = () => { $('confirmNew').classList.add('hidden'); eraseForced = false; };
       // Apagar o jogo do cartão escolhido: guarda cópia ANTES (R1); se não couber, oferece baixar e só apaga no 2º clique. Nada é apagado em silêncio.
       $('btnDelete').onclick = () => {
-        delForced = false; $('btnDelYes').textContent = 'Sim, apagar'; $('btnDelDl').classList.add('hidden'); $('confirmNew').classList.add('hidden');
+        xferClose(); delForced = false; $('btnDelYes').textContent = 'Sim, apagar'; $('btnDelDl').classList.add('hidden'); $('confirmNew').classList.add('hidden');
         $('delMsg').textContent = (has ? 'Apagar o Jogo ' + sel + '? ' : 'O Jogo ' + sel + ' não pôde ser lido. Apagá-lo? ') + 'Uma cópia de segurança fica guardada neste navegador.';
         $('confirmDel').classList.remove('hidden');
       };
@@ -2287,16 +2441,67 @@
         const raw = SaveManager.peekBest().raw;
         if (raw !== null && !delForced && !SaveManager.copies.add(raw)) {
           delForced = true; $('delMsg').textContent = 'Não foi possível guardar uma cópia do Jogo ' + sel + ' (sem espaço no navegador). Baixe o save antes ou apague mesmo assim.';
-          $('btnDelYes').textContent = 'Apagar mesmo assim'; $('btnDelDl').classList.remove('hidden'); $('btnDelDl').onclick = () => downloadText(saveFileName(), raw);
+          $('btnDelYes').textContent = 'Apagar mesmo assim'; $('btnDelDl').classList.remove('hidden'); $('btnDelDl').onclick = () => downloadText(saveFileName('copia'), raw);
           return;
         }
         SaveManager.removeMain(); cards = SaveManager.slots(); selectSlot(sel);
       };
       $('btnDelNo').onclick = () => { $('confirmDel').classList.add('hidden'); delForced = false; };
+      /* ---- Exportar / Importar (Fase 2a) ---- */
+      const describeGame = (sm, savedAt) => cleanName(sm.name, (CHARACTERS[sm.char] || {}).defName || 'Fazendeiro') + ' · Dia ' + sm.day + ' · ' + fmt(sm.gold) + ' ◎' + (savedAt ? ' · salvo ' + ago(savedAt) : '');
+      const slotLabel = c => 'Jogo ' + c.slot + (c.status === 'ok' ? ' — Dia ' + c.summary.day + ' · ' + fmt(c.summary.gold) + ' ◎ (será substituído)' : c.status === 'invalid' ? ' — ilegível (será substituído)' : ' — vazio');
+      const importRefused = msg => { xferClose(); xferOpen({ err: true, title: 'Não foi possível importar', msg: msg + ' Nada foi alterado.', no: 'Entendi' }); };
+      const importPrompt = () => {      // confirmação com o resumo do arquivo e o destino escolhido; nada é gravado antes do "Importar"
+        const dest = +$('xferSlot').value, c = cards[dest - 1], info = pending.info;
+        xferOpen({ title: 'Importar jogo', pick: true, yes: 'Importar',
+          msg: 'Jogo do arquivo: ' + describeGame(info.summary, info.savedAt) + '.' + (info.repaired ? ' ' + info.repaired + ' dado(s) inválido(s) serão corrigidos.' : '')
+            + (c.status === 'empty' ? '' : ' O Jogo ' + dest + ' atual será substituído (uma cópia de segurança fica guardada neste navegador).') });
+      };
+      $('btnImport').onclick = () => $('fileImport').click();
+      $('fileImport').onchange = async e => {
+        const f = e.target.files && e.target.files[0]; e.target.value = '';          // zera para poder escolher o mesmo arquivo de novo
+        if (!f) return;
+        if (f.size > SaveManager.IMPORT_MAX) { importRefused(IMPORT_PROBLEMS.size); return; }
+        let text; try { text = await f.text(); } catch (err) { importRefused('Não foi possível ler o arquivo.'); return; }
+        const info = SaveManager.inspectImport(text);
+        if (!info.ok) { importRefused(IMPORT_PROBLEMS[info.reason] || 'O arquivo não pôde ser usado.'); return; }
+        cards = SaveManager.slots();
+        xferClose(); pending = { text, info };
+        const pick = $('xferSlot'); pick.textContent = '';
+        for (const c of cards) { const o = document.createElement('option'); o.value = c.slot; o.textContent = slotLabel(c); pick.appendChild(o); }
+        const free = cards.find(c => c.status === 'empty');
+        pick.value = cards[sel - 1].status === 'empty' ? sel : free ? free.slot : sel;          // destino padrão: o cartão escolhido se estiver vazio, senão o 1º vazio (nunca substitui sem o jogador escolher)
+        importPrompt();
+      };
+      $('xferSlot').onchange = () => { if (pending) importPrompt(); };
+      $('btnXferYes').onclick = () => {
+        if (!pending) return;
+        const dest = +$('xferSlot').value, r = SaveManager.importInto(dest, pending.text, { force: xferForce });
+        if (r.ok) {
+          cards = SaveManager.slots(); selectSlot(dest);          // atualiza os cartões e fecha a caixa; depois mostra o resultado
+          xferOpen({ title: '✓ Jogo importado', msg: 'O jogo foi gravado no Jogo ' + dest + ' (' + describeGame(r.summary) + ').' + (r.repaired ? ' ' + r.repaired + ' dado(s) inválido(s) foram corrigidos.' : '') + ' Clique em Continuar para jogar.', no: 'Entendi' });
+          return;
+        }
+        if (r.reason === 'nocopy') {      // R1: não coube a cópia do jogo que seria substituído — oferece baixar; só importa por cima no 2º clique
+          xferForce = true; xferRaw = r.raw;
+          xferOpen({ err: true, title: 'Importar jogo', msg: 'Não foi possível guardar uma cópia do Jogo ' + dest + ' atual (sem espaço no navegador). Baixe-o antes ou importe mesmo assim — o jogo atual será perdido.', yes: 'Importar mesmo assim', dl: true });
+          return;
+        }
+        importRefused(r.reason === 'write' ? (isQuotaError(r.error) ? 'Sem espaço no navegador para gravar o jogo. Libere espaço (dados do site) e tente de novo.' : 'O navegador não deixou gravar (modo privado ou dados do site bloqueados).') : (IMPORT_PROBLEMS[r.reason] || 'O arquivo não pôde ser usado.'));
+      };
+      $('btnXferDl').onclick = () => { if (xferRaw !== null) downloadText(saveFileName('copia', +$('xferSlot').value), xferRaw); };
+      $('btnXferNo').onclick = xferClose;
+      $('btnExport').onclick = () => {
+        const r = SaveManager.exportSlot(sel);
+        if (!r.ok) { xferOpen({ err: true, title: 'Não foi possível exportar', msg: 'O Jogo ' + sel + ' não pôde ser lido. Nada foi baixado.', no: 'Entendi' }); return; }
+        const fn = saveFileName(); downloadText(fn, r.text);
+        xferOpen({ title: '✓ Jogo exportado', msg: 'O Jogo ' + sel + ' foi baixado como ' + fn + '. Guarde o arquivo num lugar seguro: ele serve de backup e para levar o jogo a outro aparelho (botão Importar).'
+          + (r.recovered ? ' (É a versão recuperada: o jogo salvo estava danificado.)' : '') + (r.future ? ' (É de uma versão mais nova do jogo: o arquivo é uma cópia fiel, sem alterações.)' : ''), no: 'Entendi' });
+      };
       window.addEventListener('beforeunload', () => { if (running) save(); });
       window.addEventListener('pagehide', () => { if (running) save(); });       // iOS/celular: beforeunload não é confiável
       document.addEventListener('visibilitychange', () => { if (document.hidden) { if (running) { save(); if (!modalOpen) openMenu(); } Snd.suspend(); } else Snd.resume(); });
-      $('btnNew').disabled = false; $('btnContinue').disabled = false; $('btnDelete').disabled = false;
+      $('btnNew').disabled = false; $('btnContinue').disabled = false; $('btnDelete').disabled = false; $('btnExport').disabled = false; $('btnImport').disabled = false;
     } catch (e) {
       console.error(e); fail('Erro ao carregar o jogo (' + e.message + '). Recarregue a página.');
     }

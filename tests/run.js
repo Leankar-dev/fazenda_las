@@ -22,6 +22,10 @@ const SCENARIOS = [
   'slots-cartoes', 'slots-nome-hostil', 'slots-independentes', 'slots-novo-em-outro', 'slots-apagar', 'slots-apagar-sem-espaco', 'legado-vai-para-slot1',   // Fase 1c: 3 slots
   'continuar-pausado', 'e2e-recarrega',                                             // Fase 1c: começa pausado; novo → jogar → recarregar → continuar idêntico
   'slots-apagar-recuperado', 'novo-jogo-recuperado', 'slots-trocar-futuro', 'slots-trocar-conflito',     // revisão da 1c: apagar/novo sobre jogo recuperado; Trocar de jogo sem perder progresso
+  'titulo-velho-apagado', 'titulo-velho-corrompido',                                // revisão da 1c (N5): Continuar com o título desatualizado não inicia jogo novo em silêncio
+  'export-titulo', 'export-pausa', 'importar-invalido', 'importar-slots', 'importar-sem-espaco', 'e2e-exporta-importa',     // Fase 2a: exportar/importar arquivo (E2E: exportar → limpar tudo → recarregar → importar → idêntico)
+  'indicador-salvamento', 'storage-aviso-boot', 'storage-cheio-aviso', 'persist-concedido', 'persist-negado', 'persist-sem-api', 'backup-metas',     // Fase 2b: indicador/faixa, storage indisponível, persist(), backup nas metas
+  'lock-bloqueada', 'lock-silenciosa', 'lock-fecha-sozinha', 'lock-cede', 'lock-roubado', 'lock-sem-api',                                     // Fase 2c: Web Locks (2ª aba não inicia nem grava; Assumir aqui; roubo; sem API)
 ];
 
 function loadFixtures() {

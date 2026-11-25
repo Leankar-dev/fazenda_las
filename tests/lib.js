@@ -28,6 +28,7 @@ function buildSite(dest, { files = {}, fixtures = {}, scenarioFile = path.join(_
   fs.cpSync(path.join(ROOT, 'assets'), path.join(dest, 'assets'), { recursive: true });
   for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(dest, name), content);
   fs.writeFileSync(path.join(dest, 'tests-fixtures.js'), 'window.FIXTURES = ' + JSON.stringify(fixtures) + ';');
+  fs.copyFileSync(path.join(__dirname, 'fakes.js'), path.join(dest, 'tests-fakes.js'));
   fs.copyFileSync(scenarioFile, path.join(dest, 'tests-scenarios.js'));
   let html = fs.readFileSync(path.join(dest, 'index.html'), 'utf8');
   const tag = '<script src="game.js"></script>';
@@ -36,7 +37,9 @@ function buildSite(dest, { files = {}, fixtures = {}, scenarioFile = path.join(_
   // 250 ms de tempo virtual um temporizador entrega o callback. SEMPRE com performance.now() (o timestamp do rAF real é de outra base: misturar os dois dava dt NEGATIVO → time regredia → ellipse com raio negativo). O Chrome headless NÃO produz quadros com a tela do Windows bloqueada/apagada (medido: 2 quadros em 3 s);
   // sem isto os testes ficam presos em "Carregando..." e estouram o tempo. (Um rAF 100 % por temporizador a 16 ms satura a CPU em tempo virtual.)
   const raf = '<script>(function(){var r=window.requestAnimationFrame.bind(window);window.requestAnimationFrame=function(cb){var d=false,f=function(){if(!d){d=true;cb(performance.now())}};r(f);setTimeout(f,250);return 0}})();</script>';
-  html = html.replace(tag, raf + '<script src="tests-fixtures.js"></script><script>window.__errs=[];window.addEventListener("error",function(e){window.__errs.push(e.message)});</script>'
+  // Web Locks/BroadcastChannel FALSOS em toda página (o real não responde em tempo virtual — ver tests/fakes.js); a aba "que já joga" dos cenários usa estes mesmos falsos
+  const fakes = '<script src="tests-fakes.js"></script><script>(function(){var L=Fakes.fakeLocks(),B=Fakes.fakeBus();Object.defineProperty(navigator,"locks",{value:L,configurable:true});window.BroadcastChannel=function(n){return B(n)};window.__fake={locks:L,bus:B}})();</script>';
+  html = html.replace(tag, raf + fakes + '<script src="tests-fixtures.js"></script><script>window.__errs=[];window.addEventListener("error",function(e){window.__errs.push(e.message)});</script>'
     + tag + '<script src="tests-scenarios.js"></script>');
   fs.writeFileSync(path.join(dest, 'index.html'), html);
   return dest;

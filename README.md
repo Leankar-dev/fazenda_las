@@ -42,6 +42,19 @@ A tela inicial mostra **3 cartões de jogo** (personagem, nome, dia, ouro e há 
 - **Trocar de jogo** nunca descarta progresso em silêncio: se não der para salvar (outra aba salvou depois, ou o jogo está salvo numa versão mais nova), o jogo mostra o aviso e as opções (usar esta aba, baixar cópia, sair mesmo assim).
 - O título da aba é sempre **FAZENDA LAS** (não leva mais o nome do personagem, já que há 3 jogos).
 
+## Backup e troca de aparelho (Exportar / Importar)
+Os jogos ficam **só neste navegador** (`localStorage`): limpar os dados do site, trocar de navegador ou de aparelho os perde. Por isso dá para levar o jogo num arquivo:
+- **Exportar** (tela inicial, no cartão escolhido, ou **Esc → Exportar** durante o jogo) baixa `fazenda-las-AAAA-MM-DD-slotN.json`. Guarde o arquivo num lugar seguro (e-mail, nuvem, pen drive). Pelo menu de pausa sai o jogo **como está na tela**, mesmo que esta aba não consiga salvar.
+- **Importar** (tela inicial) lê um arquivo `.json` exportado, **mostra o resumo** (personagem, dia, ouro, quando foi salvo) e deixa **escolher em qual jogo gravar** (o padrão é o primeiro cartão vazio). Nada é gravado antes de você confirmar; se o jogo escolhido já existe, o jogo atual vira antes uma **cópia de segurança** (e, se a cópia não couber, o jogo oferece baixar o arquivo antes).
+- Um arquivo que não é um jogo do FAZENDA LAS, está incompleto, foi alterado à mão ou é de uma versão mais nova do jogo é **recusado com uma mensagem clara e nada é gravado**. Arquivos de saves antigos (formato anterior) também são aceitos.
+
+## Está salvando? (indicador, avisos e aba única)
+- O **💾 no canto do painel** mostra o estado do salvamento: **✓ verde** = salvo (passe o mouse para ver a hora); **! amarelo** = esta aba não está salvando porque outra aba salvou depois (ou o jogo está salvo numa versão mais nova); **! vermelho** = o jogo **não está sendo salvo** (sem espaço no navegador, modo anônimo ou dados do site bloqueados) ou outra aba está com o jogo. Clique nele para abrir o menu (onde fica o **Exportar**).
+- Quando **não consegue salvar**, uma **faixa vermelha** pede para **Exportar agora** (baixa o jogo como está na tela). **Dispensar** a esconde até o salvamento voltar e falhar de novo. Se o navegador já não deixa salvar na abertura, a tela inicial avisa **antes** de você jogar.
+- Ao **bater uma meta**, o jogo sugere (faixa verde) guardar um backup com **Exportar**; não insiste se você acabou de exportar.
+- O jogo pede ao navegador para **não apagar os dados do site** (`navigator.storage.persist()`) depois do seu primeiro clique ou tecla. O **Esc** mostra se isso foi concedido; se não, o aviso lembra de exportar de vez em quando (no iPhone/iPad o Safari pode apagar dados de sites não abertos por cerca de 7 dias).
+- **Só uma aba joga por vez.** Se o FAZENDA LAS já está aberto em outra aba ou janela, a nova aba mostra "já está aberto em outra aba" e **não inicia** (nem grava). **Assumir aqui** faz a outra aba **salvar o jogo e parar** (se ela não responder em ~3 s, esta toma o jogo). Se a outra aba for fechada, esta entra sozinha. A aba que perdeu o jogo oferece **Baixar meu jogo** e **Recarregar**. Navegadores sem essa função continuam protegidos pelo aviso de "jogo aberto em outra aba".
+
 ## Arquivos
 - `assets/fazendeiro/` – sprites do Elias (recortados de `docs/imagem_fazendeiro.jpeg`)
 - `assets/fazendeira/` – sprites da Karen (recortados de `docs/imagem_fazendeira.jpeg`, inclui os chapéus)
@@ -49,7 +62,7 @@ A tela inicial mostra **3 cartões de jogo** (personagem, nome, dia, ouro e há 
 - `assets/animais/` – cachorro, vaca, cavalo e porco (8 vistas cada), `props/` (37 acessórios) e `tiles/` (15), recortados de `docs/animais.jpeg`
 - `animais.js` – curral, comportamento dos animais e montaria
 - `art.js` – arte procedural complementar (plantações, celeiro, árvores, galinhas...)
-- `save.js` – persistência (`SaveManager`): salvar/carregar, cópias de segurança, proteção contra duas abas e configuração de áudio
+- `save.js` – persistência (`SaveManager`): salvar/carregar, cópias de segurança, exportar/importar, proteção contra duas abas (aviso por `rev` + bloqueio de jogo por Web Locks), sonda do storage, `persist()` e configuração de áudio
 - `game.js` – lógica, renderização, UI e áudio (WebAudio)
 
 ## Música e animações

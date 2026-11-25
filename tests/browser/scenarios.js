@@ -10,7 +10,7 @@
      T — acesso ao ARMAZENAMENTO, NEUTRO AO FORMATO. Os cenários não sabem em que chave nem em que formato o save mora: tudo passa por T.
      Hoje (Fase 1b): formato v2 — envelope com crc em `fazenda_las:v2:slot:1` (+ `:bak`, `:tmp`), cópias `fazenda_las:v2:copy:<ts>`, `meta`, `cfg` —
      e o LEGADO v1 (`fazenda_leankar_*`, `fazenda_elias_*`), que o jogo só LÊ. "Estado" = o objeto do jogo (S); "raw" = o texto gravado.
-       T.reset()                       apaga TUDO do storage
+       T.reset()                       apaga TUDO do storage · T.snapshot()  texto com TODO o storage (igual antes e depois = nada foi gravado)
        — save principal (slot) —
        T.readMain() / T.mainState()    texto gravado / estado (dados + rev; null se não há save ou o texto não é JSON). O slot pode ter envelope v2 OU texto v1
        T.mainEnv() / T.mainSchema() / T.mainCrcOk()   o envelope (null se não for v2) · o schema (2; 1 se o slot tem o formato antigo) · o crc confere?
@@ -49,6 +49,7 @@
     const get = k => localStorage.getItem(k), set = (k, v) => localStorage.setItem(k, v);
     return {
       reset: () => localStorage.clear(),
+      snapshot: () => JSON.stringify(Object.keys(localStorage).sort().map(k => [k, localStorage.getItem(k)])),      // TODO o storage, ordenado: "nada foi gravado" = snapshot igual
       isMainKey: k => k === SLOT,
       readMain: () => get(SLOT),
       mainState: () => stateOf(get(SLOT)),
@@ -1013,6 +1014,432 @@
       T.setMainState(Object.assign(T.fixtureState('save_v1_atual'), { rev: 50 }));          // "outra aba" salvou depois
       G.openMenu(); $('modalBox').querySelector('[data-a=switchslot]').click(); await wait(300);
       ok('a página NÃO recarregou e o aviso de outra aba está visível', window.__alive === true && staleVisible());
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  /* N5 — título desatualizado: outra aba apaga/corrompe o slot DEPOIS de o cartão ser montado; "Continuar" não pode iniciar um jogo novo em silêncio */
+  const continueStale = async () => {
+    $('btnContinue').click(); await wait(300); await waitStart(() => !vis('busy'));
+    if (window.__game) window.requestAnimationFrame = () => 0;      // se o defeito voltar e o jogo iniciar, congela o laço: o cenário FALHA limpo em vez de travar
+    await wait(200);
+  };
+  S_['titulo-velho-apagado'] = {
+    seed() { T.reset(); T.setMain(validSave(3, 300)); },
+    async run() {
+      fastRaf(); await bootReady();
+      ok('o título mostra Continuar no jogo 1 (dia 3)', vis('btnContinue') && cardText(1).includes('Dia 3'), cardText(1));
+      T.removeMain();                                           // "outra aba" apagou o jogo
+      await continueStale();
+      ok('NÃO iniciou jogo (nem novo)', !window.__game && vis('title'));
+      ok('o slot continua vazio (nada foi gravado)', T.slotRaw(1) === null && T.copies().length === 0);
+      ok('o cartão foi atualizado para "Vazio" e o Continuar sumiu', cardText(1).includes('Vazio') && !vis('btnContinue'), cardText(1));
+      ok('avisa que o jogo mudou em outra aba', vis('saveProblem') && $('spMsg').textContent.includes('outra aba'), $('spMsg').textContent);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['titulo-velho-corrompido'] = {
+    seed() { T.reset(); T.setMain(validSave(3, 300)); },
+    async run() {
+      fastRaf(); await bootReady();
+      ok('o título mostra Continuar no jogo 1', vis('btnContinue'));
+      T.setMain('{lixo');                                       // "outra aba"/cota corrompeu o slot
+      await continueStale();
+      ok('NÃO iniciou jogo (nem novo)', !window.__game && vis('title'));
+      ok('o texto ilegível continua no slot (não foi sobrescrito)', T.readMain() === '{lixo', T.readMain());
+      ok('a caixa de problema explica (corrompido) e há cópia guardada', vis('saveProblem') && $('spMsg').textContent.includes('corrompido') && T.copies().some(c => c.raw === '{lixo'), $('spMsg').textContent);
+      ok('o cartão é "ilegível" e o Continuar sumiu', cardText(1).includes('ilegível') && !vis('btnContinue'), cardText(1));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  /* ---------- Fase 2a: exportar / importar arquivo ---------- */
+  // Captura os downloads (Blob + <a download>) SEM baixar de verdade: devolve a lista { name, text() }.
+  function captureDownloads() {
+    const out = [], blobs = new Map(), create = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = b => { const u = create(b); blobs.set(u, b); return u; };
+    HTMLAnchorElement.prototype.click = function () { if (this.download) { const b = blobs.get(this.href); out.push({ name: this.download, text: () => b.text() }); } };
+    return out;
+  }
+  // Escolhe um "arquivo" no seletor do título (o mesmo caminho do clique em Importar → escolher arquivo).
+  // A leitura do arquivo (File.text()) é assíncrona de verdade e o tempo virtual corre mais rápido: por isso fecha a caixa ANTES e espera ela reaparecer
+  // (senão a verificação lê a mensagem da rodada anterior).
+  async function importText(text, filename = 'jogo.json') {
+    $('btnXferNo').click();
+    const dt = new DataTransfer(); dt.items.add(new File([text], filename, { type: 'application/json' }));
+    $('fileImport').files = dt.files; $('fileImport').dispatchEvent(new Event('change'));
+    let n = 0; while (!vis('xferBox') && n++ < 100) await wait(50);
+    await wait(50);
+  }
+  const xferMsg = () => $('xferMsg').textContent, xferShown = () => vis('xferBox');
+  const localDate = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); };
+  const stripRev = st => { const c = JSON.parse(JSON.stringify(st)); delete c.rev; return c; };
+
+  S_['export-titulo'] = {          // Exportar um cartão da tela de título: arquivo v2 íntegro do slot certo, nada é gravado
+    seed() { T.reset(); T.setSlotState(2, Object.assign(T.fixtureState('save_v1_atual'), { day: 7, gold: 700, rev: 5 })); T.setSlot(3, '{lixo'); },
+    async run() {
+      const dl = captureDownloads(); await bootReady();
+      ok('slot 2 já vem selecionado e tem Exportar', sel().join() === '2' && vis('btnExport') && vis('btnImport'));
+      await clickCard(1); ok('cartão vazio: sem Exportar (Importar continua)', !vis('btnExport') && vis('btnImport'));
+      await clickCard(3); ok('cartão ilegível: sem Exportar (há "Baixar cópia" no aviso)', !vis('btnExport') && vis('btnSpExport'));
+      await clickCard(2); const before = T.snapshot(); $('btnExport').click(); await wait(200);
+      ok('baixou 1 arquivo', dl.length === 1, dl.length);
+      ok('nome fazenda-las-AAAA-MM-DD-slot2.json com a data LOCAL', dl[0] && dl[0].name === 'fazenda-las-' + localDate() + '-slot2.json', dl[0] && dl[0].name);
+      const txt = await dl[0].text(), env = JSON.parse(txt);
+      ok('o arquivo é um envelope v2 íntegro (magic, schema 2, crc confere)', env.magic === 'fazenda_las-save' && env.schema === 2 && SaveManager.format.inspect(txt).ok);
+      ok('é o jogo do slot 2: slot=2, rev=5, dia 7, ouro 700', env.slot === 2 && env.rev === 5 && env.data.day === 7 && env.data.gold === 700, env.slot + '/' + env.rev + '/' + env.data.day + '/' + env.data.gold);
+      ok('sem pt/pk nem v/rev dentro de data', !/"pt"|"pk"/.test(JSON.stringify(env.data.crops)) && !('v' in env.data) && !('rev' in env.data));
+      ok('mostra a confirmação com o nome do arquivo', xferShown() && xferMsg().includes(dl[0].name) && !$('xferBox').classList.contains('err'), xferMsg());
+      ok('exportar NÃO gravou nada no storage', T.snapshot() === before);
+      $('btnXferNo').click(); ok('Entendi fecha a caixa', !xferShown());
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['export-pausa'] = {          // Exportar pelo menu de pausa: o jogo EM MEMÓRIA, mesmo numa aba velha (que não grava)
+    seed() { T.reset(); },
+    async run() {
+      const dl = captureDownloads(); await bootReady(); const G = await startNew();
+      G.S.gold = 4321; ok('salvou', G.save(true).ok); const stored = T.readMain(); G.S.gold = 4400;          // 4400 só existe na memória
+      G.openMenu(); const btn = $('modalBox').querySelector('[data-a=export]'); ok('o menu tem o botão Exportar', !!btn);
+      btn.click(); await wait(200);
+      ok('baixou 1 arquivo fazenda-las-AAAA-MM-DD-slot1.json', dl.length === 1 && dl[0].name === 'fazenda-las-' + localDate() + '-slot1.json', dl.length && dl[0].name);
+      let txt = await dl[0].text(), env = JSON.parse(txt);
+      ok('envelope v2 íntegro com o estado EM MEMÓRIA (ouro 4400, slot 1)', SaveManager.format.inspect(txt).ok && env.slot === 1 && env.data.gold === 4400, env.data.gold);
+      ok('avisa com um toast', toasts().some(t => t.includes('Jogo exportado')), toasts().join('|'));
+      ok('exportar NÃO gravou: o slot continua com o ouro anterior', T.readMain() === stored);
+      T.setMainState(Object.assign(T.fixtureState('save_v1_atual'), { rev: 50 }));          // "outra aba" salvou: esta aba vira velha
+      ok('a aba agora é velha (não grava)', !G.save(true).ok);
+      G.S.gold = 4500; G.openMenu(); $('modalBox').querySelector('[data-a=export]').click(); await wait(200);
+      ok('mesmo assim exporta o jogo desta aba (saída de emergência)', dl.length === 2, dl.length);
+      txt = await dl[1].text(); env = JSON.parse(txt); ok('com o ouro 4500', SaveManager.format.inspect(txt).ok && env.data.gold === 4500, env.data.gold);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['importar-invalido'] = {          // arquivo ruim: mensagem clara, NADA é gravado (nem cópia), nenhum botão de confirmar
+    seed() { T.reset(); T.setSlot(1, validSave(3, 300)); },
+    async run() {
+      await bootReady(); const good = JSON.parse(validSave(9, 900)), tamper = JSON.parse(validSave(9, 900)); tamper.data.gold = 5;
+      const cases = [
+        ['arquivo vazio', '', 'vazio'], ['texto qualquer', '{lixo', 'não é um jogo salvo'], ['JSON que não é um objeto', '"abc"', 'não é um jogo salvo'],
+        ['truncado', validSave(9, 900).slice(0, 200), 'não é um jogo salvo'], ['editado sem recalcular o crc', JSON.stringify(tamper), 'alterado'],
+        ['versão futura', JSON.stringify(Object.assign({}, good, { schema: 3 })), 'versão mais nova'], ['schema desconhecido', JSON.stringify(Object.assign({}, good, { schema: 0 })), 'não reconhece'],
+        ['crc ok mas sem dados do mapa', JSON.stringify(SaveManager.format.wrap({ day: 1, soil: [] }, 1, 1)), 'incompleto'], ['grande demais (> 2 MB)', 'x'.repeat(2000001), 'grande demais'],
+      ];
+      const before = T.snapshot();
+      for (const [label, text, frag] of cases) {
+        await importText(text);
+        ok(label + ': mostra erro (vermelho) citando "' + frag + '"', xferShown() && $('xferBox').classList.contains('err') && xferMsg().includes(frag), xferMsg());
+        ok(label + ': diz que nada foi alterado e não oferece Importar', xferMsg().includes('Nada foi alterado') && !vis('btnXferYes') && !vis('xferSlotRow'));
+        ok(label + ': NADA foi gravado (storage idêntico)', T.snapshot() === before);
+        $('btnXferNo').click();
+      }
+      ok('o título continua intacto (cartão 1 com Continuar)', vis('btnContinue') && cardText(1).includes('Dia 3'));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['importar-slots'] = {          // importar: destino padrão seguro, re-embrulha no slot escolhido, cópia ao substituir, rev continua, v1 solto aceito
+    seed() { T.reset(); T.setSlot(1, validSave(3, 300)); },
+    async run() {
+      await bootReady(); const raw1 = T.slotRaw(1), rev1 = T.slotEnv(1).rev, snap0 = T.snapshot(), pick = $('xferSlot');
+      await importText(validSave(9, 900));
+      ok('mostra a confirmação com resumo do arquivo (Dia 9, 900) e escolha do destino', xferShown() && vis('xferSlotRow') && vis('btnXferYes') && xferMsg().includes('Dia 9') && xferMsg().includes('900'), xferMsg());
+      ok('3 destinos: o 1 diz "será substituído", 2 e 3 "vazio"', pick.options.length === 3 && pick.options[0].textContent.includes('será substituído') && pick.options[1].textContent.includes('vazio') && pick.options[2].textContent.includes('vazio'), [...pick.options].map(o => o.textContent).join(' | '));
+      ok('destino padrão = 1º slot VAZIO (o 1 está ocupado: nunca substitui sem o jogador escolher)', pick.value === '2', pick.value);
+      ok('para um destino vazio, a mensagem não fala em substituir', !xferMsg().includes('substituído'));
+      ok('ainda NADA foi gravado (só ao confirmar)', T.snapshot() === snap0);
+      $('btnXferYes').click(); await wait(200);
+      const e2 = T.slotEnv(2);
+      ok('gravou no slot 2: envelope com slot=2 (o arquivo dizia 1), rev 1, dia 9, crc ok', e2 && e2.slot === 2 && e2.rev === 1 && e2.data.day === 9 && SaveManager.format.inspect(T.slotRaw(2)).ok, e2 && e2.slot + '/' + e2.rev);
+      ok('o slot 1 está BYTE a BYTE igual e não houve cópia (o destino estava vazio)', T.slotRaw(1) === raw1 && T.copies().length === 0);
+      ok('o título atualizou: cartão 2 selecionado com Dia 9, Continuar visível e mensagem de sucesso', sel().join() === '2' && cardText(2).includes('Dia 9') && vis('btnContinue') && xferMsg().includes('Jogo 2') && xferShown(), sel().join() + ' | ' + cardText(2));
+      $('btnXferNo').click();
+      // 2) por cima de um jogo existente (escolhido de propósito): cópia + rev continua
+      await importText(validSave(11, 1100)); pick.value = '1'; pick.dispatchEvent(new Event('change'));
+      ok('destino 1: avisa que será substituído e que fica uma cópia', xferMsg().includes('será substituído') && xferMsg().includes('cópia de segurança'), xferMsg());
+      $('btnXferYes').click(); await wait(200);
+      ok('slot 1 agora é o jogo do arquivo (dia 11) e o rev CONTINUOU (+1)', T.slotState(1).day === 11 && T.slotEnv(1).rev === rev1 + 1, T.slotEnv(1).rev + ' vs ' + rev1);
+      ok('o jogo substituído ficou numa cópia idêntica', T.copies().some(c => c.raw === raw1), T.copies().length);
+      ok('o slot 2 não foi tocado', T.slotEnv(2).data.day === 9); $('btnXferNo').click();
+      // 3) save v1 solto (formato antigo) também importa — e sai como v2
+      await importText(T.validLegacyRaw(4, 400)); ok('v1 solto aceito; destino padrão = slot 3 (o único vazio)', xferShown() && vis('btnXferYes') && pick.value === '3', xferMsg());
+      $('btnXferYes').click(); await wait(200);
+      ok('slot 3 é v2 (schema 2, slot 3, crc ok), dia 4', T.slotEnv(3) && T.slotEnv(3).schema === 2 && T.slotEnv(3).slot === 3 && SaveManager.format.inspect(T.slotRaw(3)).ok && T.slotState(3).day === 4);
+      $('btnXferNo').click(); $('btnContinue').click(); const G = await gameReady(true);
+      ok('Continuar no slot 3 abre o jogo importado (dia 4, ouro 400), pausado', G.S.day === 4 && G.S.gold === 400 && vis('modal'), G.S.day + '/' + G.S.gold);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['importar-sem-espaco'] = {          // a cópia do jogo substituído não cabe: avisa, oferece baixar, NÃO apaga; e se nem gravar couber, o slot fica intacto
+    seed() { T.reset(); T.setSlot(1, validSave(3, 300)); },
+    async run() {
+      const dl = captureDownloads(); await bootReady(); const raw1 = T.slotRaw(1), pick = $('xferSlot');
+      await importText(validSave(9, 900)); pick.value = '1'; pick.dispatchEvent(new Event('change'));
+      fillStorage();
+      $('btnXferYes').click(); await wait(200);
+      ok('avisa que NÃO coube a cópia e oferece "Importar mesmo assim" e "Baixar cópia"', xferMsg().includes('Não foi possível guardar uma cópia') && $('btnXferYes').textContent === 'Importar mesmo assim' && vis('btnXferDl') && $('xferBox').classList.contains('err'), xferMsg());
+      ok('o jogo atual continua intacto', T.slotRaw(1) === raw1);
+      $('btnXferDl').click(); await wait(100);
+      ok('Baixar cópia entrega o jogo que seria substituído (slot1-copia)', dl.length === 1 && /-slot1-copia\.json$/.test(dl[0].name) && (await dl[0].text()) === raw1, dl.length && dl[0].name);
+      $('btnXferYes').click(); await wait(200);      // 2º clique: tenta mesmo assim, mas nem a gravação cabe
+      ok('sem espaço nem para gravar: erro claro, nada alterado', xferShown() && $('xferBox').classList.contains('err') && xferMsg().includes('Sem espaço') && xferMsg().includes('Nada foi alterado'), xferMsg());
+      ok('o slot 1 continua BYTE a BYTE igual (e sem resto de escrita em andamento)', T.slotRaw(1) === raw1 && T.readTmp() === null);
+      unfillStorage();
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  /* E2E (acceptance da Fase 2): jogar → exportar → LIMPAR TUDO → recarregar → importar → estado idêntico, campo a campo. Recarga real; a fase 1 guarda o que precisa no sessionStorage. */
+  S_['e2e-exporta-importa'] = {
+    seed() { if (sessionStorage.getItem('e2e_exp')) return; T.reset(); },
+    async run() {
+      if (!sessionStorage.getItem('e2e_exp')) {          // ---- fase 1 ----
+        const dl = captureDownloads(); await bootReady(); const G = await startNew(1), S = G.S, A = G.Animals;
+        S.gold = 1234; S.earned = 2500; S.goal = 1; S.up.basket = 1; S.eggs = 4; S.stone = 3; S.wood = 5; S.milk = 2; S.seeds.tomate = 6; S.harvest.cenoura = 3; S.names.fazendeira = 'Maria';
+        for (const k of ['vaca', 'porco']) { while (S.owned[k] < 2) { S.owned[k]++; A.add(k); } }
+        for (let x = 6; x <= 11; x++) for (let y = 8; y <= 9; y++) { S.soil[y * G.MW + x] = 2; S.crops[x + ',' + y] = { t: x % 2 ? 'cenoura' : 'tomate', age: 1 + (x % 3) }; }
+        for (let i = 0; i < 2; i++) G.endDay(false);
+        steps(G, 30); G.P.x = 9 * 64; G.P.y = 7 * 64; G.openMenu(); ok('fase 1: salvou', G.save().ok);
+        const before = T.mainState(); ok('fase 1: dia ≥ 3, ouro 1234, 12 plantas', before.day >= 3 && before.gold === 1234 && Object.keys(before.crops).length === 12, before.day + '/' + before.gold);
+        $('modalBox').querySelector('[data-a=export]').click(); await wait(200);
+        ok('fase 1: exportou 1 arquivo', dl.length === 1, dl.length); const txt = await dl[0].text();
+        sessionStorage.setItem('e2e_exp', txt); sessionStorage.setItem('e2e_before', JSON.stringify(before)); sessionStorage.setItem('e2e_tests', JSON.stringify(tests));
+        T.reset();          // "limpar dados do site": a aba aberta NÃO pode recriar o jogo ao recarregar (N4: save apagado por fora ⇒ aba velha, não grava)
+        ok('fase 1: com o storage limpo esta aba recusa gravar (não ressuscita o jogo no pagehide)', !G.save().ok && T.slotRaw(1) === null);
+        sessionStorage.setItem('e2e_tests', JSON.stringify(tests));
+        location.reload(); await wait(3000); ok('fase 1: a página NÃO recarregou (esperado recarregar)', false);
+        return;
+      }
+      // ---- fase 2 (página recarregada, storage VAZIO) ----
+      for (const t of JSON.parse(sessionStorage.getItem('e2e_tests'))) tests.push(t);
+      const txt = sessionStorage.getItem('e2e_exp'), before = stripRev(JSON.parse(sessionStorage.getItem('e2e_before')));
+      await bootReady();
+      ok('fase 2: o storage está mesmo vazio: 3 cartões vazios, sem Continuar', [1, 2, 3].every(n => T.slotRaw(n) === null && cardText(n).includes('Vazio')) && !vis('btnContinue') && T.copies().length === 0);
+      const tampered = JSON.parse(txt); tampered.data.gold += 1; const snap = T.snapshot();
+      await importText(JSON.stringify(tampered)); ok('fase 2: o arquivo ADULTERADO é recusado e nada é gravado', xferShown() && $('xferBox').classList.contains('err') && T.snapshot() === snap, xferMsg()); $('btnXferNo').click();
+      await importText(txt);
+      ok('fase 2: a confirmação mostra Maria e o ouro 1.234', xferShown() && xferMsg().includes('Maria') && xferMsg().includes('1.234'), xferMsg());
+      $('btnXferYes').click(); await wait(250);
+      const after = T.slotState(1), d1 = diff(before, stripRev(after)); ok('fase 2: o que foi gravado no slot 1 é IDÊNTICO ao jogo exportado (campo a campo)', !!after && d1.length === 0, d1.slice(0, 8).join(', '));
+      ok('fase 2: continua um envelope v2 íntegro, slot 1', T.mainSchema() === 2 && T.mainCrcOk() && T.mainEnv().slot === 1);
+      ok('fase 2: nenhuma cópia (não havia nada a substituir)', T.copies().length === 0);
+      $('btnXferNo').click(); $('btnContinue').click(); const G = await gameReady(true);
+      const d2 = diff(before, JSON.parse(JSON.stringify(G.S))); ok('fase 2: Continuar abre o jogo importado IDÊNTICO ao de antes de limpar tudo', d2.length === 0, d2.slice(0, 8).join(', '));
+      ok('fase 2: abriu pausado e dá para salvar de novo', vis('modal') && G.save().ok);
+      for (const k of ['e2e_exp', 'e2e_before', 'e2e_tests']) sessionStorage.removeItem(k);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  /* ---------- Fase 2b: indicador de salvamento, storage indisponível, persist(), backup nas metas ---------- */
+  const ind = () => $('saveInd').dataset.state, bannerKind = () => vis('saveBanner') ? $('saveBanner').dataset.kind : null;
+  const quotaThrow = () => { throw new DOMException('cheio', 'QuotaExceededError'); };
+
+  S_['indicador-salvamento'] = {          // ✓ / ⚠ no HUD + faixa "exporte agora" quando não salva; some quando volta; aba velha = amarelo
+    seed() { T.reset(); },
+    async run() {
+      const dl = captureDownloads(); await bootReady();
+      ok('armazenamento saudável: nenhum aviso na tela inicial', !vis('storageWarn'));
+      const G = await startNew();
+      ok('começa "ok" e sem faixa', ind() === 'ok' && bannerKind() === null, ind());
+      ok('salvar: continua ok e o título diz a hora', G.save().ok && ind() === 'ok' && $('saveInd').title.includes('salvo às'), $('saveInd').title);
+      const orig = Storage.prototype.setItem; Storage.prototype.setItem = quotaThrow;          // o navegador recusa gravar (cota)
+      try {
+        clearToasts(); ok('o save falha', !G.save(true).ok);
+        ok('indicador vermelho e faixa de falha', ind() === 'bad' && bannerKind() === 'fail', ind() + '/' + bannerKind());
+        ok('a faixa diz que não está salvando e manda exportar', $('sbMsg').textContent.includes('NÃO está sendo salvo') && $('sbMsg').textContent.includes('Exporte'), $('sbMsg').textContent);
+        ok('o título do indicador explica e aponta o menu', $('saveInd').title.includes('NÃO está sendo salvo') && $('saveInd').title.includes('menu'), $('saveInd').title);
+        G.S.gold = 4242; $('sbExport').click(); await wait(200);
+        const txt = dl.length ? await dl[0].text() : '';
+        ok('"Exportar agora" baixa o jogo EM MEMÓRIA (ouro 4242), mesmo sem conseguir gravar', dl.length === 1 && SaveManager.format.inspect(txt).ok && JSON.parse(txt).data.gold === 4242, dl.length);
+        $('sbClose').click(); ok('Dispensar esconde a faixa', bannerKind() === null);
+        G.save(true); ok('dispensada: não reaparece enquanto continua falhando (o indicador segue vermelho)', bannerKind() === null && ind() === 'bad');
+        Storage.prototype.setItem = orig; clearToasts();
+        ok('volta a salvar', G.save().ok);
+        ok('indicador ok, faixa some e avisa "restabelecido"', ind() === 'ok' && bannerKind() === null && toasts().some(t => t.includes('restabelecido')), ind() + '/' + toasts().join('|'));
+        Storage.prototype.setItem = quotaThrow; G.save(true);
+        ok('falhou de novo depois de restabelecer: a faixa REAPARECE (a dispensa valia só para a falha anterior)', bannerKind() === 'fail' && ind() === 'bad');
+      } finally { Storage.prototype.setItem = orig; }
+      ok('salvar de novo limpa tudo', G.save().ok && ind() === 'ok' && bannerKind() === null);
+      const o = T.mainState(); o.rev += 5; const rawO = T.setMainState(o); T.fireStorage(rawO);          // "outra aba" salvou: o navegador avisa pelo evento `storage`
+      ok('evento storage: o indicador fica AMARELO assim que o jogo roda, sem esperar o próximo save', (steps(G, 3), ind() === 'warn' && bannerKind() === null), ind());
+      G.closeModal();          // o aviso "outra aba" abriu sozinho
+      ok('aba velha: save recusado, indicador amarelo e sem faixa de falha', !G.save().ok && ind() === 'warn' && bannerKind() === null, ind());
+      ok('o título do indicador explica a aba velha', $('saveInd').title.includes('outra aba'), $('saveInd').title);
+      ok('clicar no indicador abre o menu de pausa (onde está o Exportar)', ($('saveInd').click(), vis('modal') && $('modalBox').textContent.includes('Pausa')));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['storage-aviso-boot'] = {          // modo privado / dados do site bloqueados: avisa JÁ na abertura e o jogo começa com o aviso de falha
+    seed() { T.reset(); const boom = () => { throw new DOMException('blocked', 'SecurityError'); }; for (const m of ['getItem', 'setItem', 'removeItem', 'key', 'clear']) Storage.prototype[m] = boom; },
+    async run() {
+      await bootReady();
+      ok('aviso de armazenamento visível na tela inicial', vis('storageWarn'));
+      ok('explica (modo privado/bloqueado), diz que dá para jogar e exportar', $('swMsg').textContent.includes('modo privado') && $('swMsg').textContent.includes('Exportar'), $('swMsg').textContent);
+      ok('o aviso NÃO impede de jogar (Novo jogo habilitado)', !$('btnNew').disabled);
+      $('btnSwClose').click(); ok('Entendi fecha o aviso', !vis('storageWarn'));
+      const G = await startNew();
+      ok('o jogo já começa com o indicador vermelho e a faixa de falha', ind() === 'bad' && bannerKind() === 'fail', ind() + '/' + bannerKind());
+      ok('o jogo roda sem exceção', (steps(G, 30), !window.__errs.length), window.__errs.join('|'));
+    },
+  };
+  S_['storage-cheio-aviso'] = {          // cota REAL cheia na abertura: o aviso diz "sem espaço", não "modo privado"
+    seed() { T.reset(); fillStorage(); },
+    async run() {
+      try {
+        await bootReady();
+        ok('aviso de armazenamento visível', vis('storageWarn'));
+        ok('fala de falta de espaço', $('swMsg').textContent.includes('Sem espaço'), $('swMsg').textContent);
+        ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+      } finally { unfillStorage(); }
+    },
+  };
+  function persistScenario(mode) {          // persist(): só depois da 1ª interação, uma vez, e o menu mostra o resultado
+    return {
+      seed() {
+        T.reset(); window.__persistCalls = 0;
+        const st = mode === 'sem-api' ? {} : { persisted: async () => false, persist: async () => { window.__persistCalls++; return mode === 'concedido'; } };
+        Object.defineProperty(navigator, 'storage', { value: st, configurable: true });
+      },
+      async run() {
+        await bootReady(); await wait(150);
+        ok('antes de qualquer interação NÃO pediu (o Firefox abriria uma pergunta no carregamento)', window.__persistCalls === 0, window.__persistCalls);
+        document.dispatchEvent(new Event('pointerdown')); await wait(100); document.dispatchEvent(new Event('keydown')); document.dispatchEvent(new Event('pointerdown')); await wait(100);
+        ok(mode === 'sem-api' ? 'sem a API: nada a pedir' : 'depois da 1ª interação pediu UMA vez', window.__persistCalls === (mode === 'sem-api' ? 0 : 1), window.__persistCalls);
+        const G = await startNew(); G.openMenu(); const line = $('durLine') ? $('durLine').textContent : '';
+        const want = { concedido: 'protegido', negado: 'pode apagar', 'sem-api': 'não informa' }[mode];
+        ok('o menu mostra o estado do armazenamento: "' + want + '"', line.includes(want), line);
+        ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+      },
+    };
+  }
+  S_['persist-concedido'] = persistScenario('concedido');
+  S_['persist-negado'] = persistScenario('negado');
+  S_['persist-sem-api'] = persistScenario('sem-api');
+  S_['backup-metas'] = {          // ao bater uma meta sugere exportar (faixa verde) — sem insistir, sem atropelar o aviso de falha
+    seed() { T.reset(); },
+    async run() {
+      const dl = captureDownloads(); await bootReady(); const G = await startNew(), S = G.S;
+      const reach = async (earned, wait_ = 4000) => { S.earned = earned; S.eggs = 3; G.sellAll(); await wait(wait_); };
+      await reach(399, 100);
+      ok('meta 1 atingida', S.goal === 1, S.goal); ok('a sugestão NÃO aparece na hora (deixa comemorar)', bannerKind() === null);
+      await wait(4000);
+      ok('depois de alguns segundos aparece a sugestão de backup (faixa verde) citando a meta', bannerKind() === 'tip' && $('sbMsg').textContent.includes('400') && $('sbMsg').textContent.includes('backup'), bannerKind() + ' ' + $('sbMsg').textContent);
+      ok('o botão diz só "Exportar" e a faixa é a verde', $('sbExport').textContent === 'Exportar' && $('saveBanner').classList.contains('tip'));
+      $('sbClose').click(); ok('Dispensar esconde', bannerKind() === null);
+      const orig = Storage.prototype.setItem; Storage.prototype.setItem = quotaThrow;
+      try {
+        G.save(true); ok('falha de gravação: faixa vermelha', bannerKind() === 'fail');
+        await reach(1499); ok('meta 2 atingida', S.goal === 2, S.goal);
+        ok('o aviso de FALHA tem prioridade: a sugestão não o substitui', bannerKind() === 'fail', bannerKind());
+        $('sbExport').click(); await wait(200); ok('exportar pela faixa de falha baixa o jogo', dl.length === 1, dl.length);
+      } finally { Storage.prototype.setItem = orig; }
+      ok('salvamento volta', G.save().ok && bannerKind() === null);
+      await reach(3999); ok('meta 3 atingida', S.goal === 3, S.goal);
+      ok('acabou de exportar: não insiste em outra sugestão', bannerKind() === null, bannerKind());
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  /* ---------- Fase 2c: bloqueio de jogo (Web Locks) ---------- */
+  // OUTRA aba jogando, simulada no mesmo mundo falso de locks/canal (window.__fake, instalado pelo tests/lib.js): segura o bloqueio e, se `cooperative`, cede
+  // quando recebe o pedido (como o jogo real faria depois de salvar). `release()` = a outra aba fechou · `lost` = o bloqueio dela foi roubado.
+  const PLAY = 'fazenda_las-play', never = () => new Promise(() => { });
+  function otherTab({ cooperative = false } = {}) {
+    const F = window.__fake, ch = F.bus('fazenda_las'), o = { log: [], lost: false, released: false }; let free = null;
+    o.release = () => { if (free) { o.released = true; free(); } };
+    F.locks.request(PLAY, () => new Promise(r => { free = r; })).catch(() => { o.lost = true; });
+    ch.onmessage = ev => {
+      if (!ev.data || ev.data.t !== 'takeover') return;
+      o.log.push(cooperative ? 'takeover' : 'takeover (ignorado)');
+      if (cooperative) setTimeout(() => { o.release(); ch.postMessage({ t: 'released', from: 'outra' }); }, 30);
+    };
+    return o;
+  }
+  const waitVis = async (id, max = 300) => { let n = 0; while (!vis(id) && n++ < max) await wait(100); return vis(id); };
+  const lockSeed = (extra) => { T.reset(); T.setMainState(Object.assign(T.fixtureState('save_v1_atual'), { rev: 3 })); extra && extra(); window.__snap = T.snapshot(); };
+
+  S_['lock-bloqueada'] = {          // outra aba já joga: esta NÃO inicia nem grava; "Assumir aqui" faz a outra salvar e ceder
+    seed() { lockSeed(() => { window.__other = otherTab({ cooperative: true }); }); },
+    async run() {
+      const o = window.__other;
+      ok('aparece a tela "já está aberto em outra aba"', await waitVis('lockOverlay') && $('lkTitle').textContent.includes('já está aberto'), $('lkTitle').textContent);
+      ok('só "Assumir aqui" (sem Recarregar nem Baixar)', vis('lkTake') && !vis('lkReload') && !vis('lkDl'));
+      ok('o jogo NÃO iniciou: título travado (botões desabilitados)', $('btnNew').disabled && !window.__game);
+      ok('esta aba não leu nem gravou nada (storage idêntico, sem chave de sonda)', T.snapshot() === window.__snap);
+      ok('estado do bloqueio: na fila, sem permissão de gravar', SaveManager.playLock.state() === 'waiting' && !SaveManager.playLock.allowed());
+      const r = SaveManager.save({ day: 1 }); ok('mesmo chamando save() à força: recusado pela cerca (LockLost) e nada muda', r.ok === false && r.error.name === 'LockLost' && T.snapshot() === window.__snap);
+      $('lkTake').click(); await bootReady();
+      ok('a outra aba recebeu o pedido e cedeu', o.log.join() === 'takeover' && o.released, o.log.join());
+      ok('a tela sumiu e o título carregou com o jogo salvo', !vis('lockOverlay') && vis('btnContinue') && !$('btnNew').disabled);
+      ok('agora ESTA aba joga e pode gravar', SaveManager.playLock.state() === 'held' && SaveManager.playLock.allowed());
+      $('btnContinue').click(); const G = await gameReady();
+      ok('salva normalmente (rev continua: 3 → 4)', G.save().ok && T.mainState().rev === 4, T.mainState().rev);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['lock-silenciosa'] = {          // a outra aba não responde (congelada): depois do prazo esta ROUBA o bloqueio; a outra recebe "perdeu"
+    seed() { lockSeed(() => { window.__other = otherTab({ cooperative: false }); }); },
+    async run() {
+      const o = window.__other; await waitVis('lockOverlay');
+      $('lkTake').click(); await bootReady();
+      ok('o pedido foi enviado e ignorado', o.log.join() === 'takeover (ignorado)', o.log.join());
+      ok('depois do prazo esta aba tomou o bloqueio e a outra o perdeu', SaveManager.playLock.state() === 'held' && o.lost && !o.released, SaveManager.playLock.state() + '/' + o.lost);
+      ok('a tela sumiu e o título está pronto', !vis('lockOverlay') && vis('btnContinue'));
+      $('btnContinue').click(); const G = await gameReady(); ok('esta aba salva', G.save().ok);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['lock-fecha-sozinha'] = {          // a outra aba é fechada: esta entra sozinha, sem clicar e sem roubar
+    seed() { lockSeed(() => { window.__other = otherTab({ cooperative: true }); }); },
+    async run() {
+      const o = window.__other; ok('bloqueada no início', await waitVis('lockOverlay'));
+      o.release(); await bootReady();
+      ok('entrou sozinha: sem pedido de "assumir" e sem roubo', o.log.length === 0 && !o.lost && !vis('lockOverlay') && SaveManager.playLock.state() === 'held', o.log.join());
+      $('btnContinue').click(); const G = await gameReady(); ok('joga e salva', G.save().ok);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['lock-cede'] = {          // ESTA aba joga e outra pede o jogo: salva ANTES de soltar, para, avisa e nunca mais grava
+    seed() { T.reset(); },
+    async run() {
+      const dl = captureDownloads(); await bootReady(); const G = await startNew(); G.S.gold = 777;          // 777 só existe na memória
+      const F = window.__fake, ch = F.bus('fazenda_las'), msgs = []; let atGrant = null, got = false;
+      ch.onmessage = ev => msgs.push(ev.data.t);
+      F.locks.request(PLAY, () => { got = true; atGrant = T.mainState(); return never(); });          // a outra aba espera na fila
+      ch.postMessage({ t: 'takeover', from: 'outra' });
+      let n = 0; while (!got && n++ < 100) await wait(50);
+      ok('a outra aba recebeu o bloqueio', got);
+      ok('ANTES de soltar, esta aba salvou o jogo (ouro 777 já estava no storage quando a outra assumiu)', !!atGrant && atGrant.gold === 777, atGrant && atGrant.gold);
+      ok('avisou "liberei" pelo canal', msgs.includes('released'), msgs.join());
+      ok('a tela explica (jogo aberto em outra aba) e oferece Recarregar e Baixar', vis('lockOverlay') && $('lkTitle').textContent.includes('aberto em outra aba') && vis('lkReload') && vis('lkDl') && !vis('lkTake'), $('lkTitle').textContent);
+      ok('o indicador do HUD fica vermelho', ind() === 'bad');
+      const snap = T.snapshot(), r = G.save(true);
+      ok('save() recusado (LockLost) e o storage fica idêntico', r.ok === false && r.error.name === 'LockLost' && T.snapshot() === snap, r.error && r.error.name);
+      window.dispatchEvent(new Event('pagehide')); window.dispatchEvent(new Event('beforeunload')); await wait(1000);
+      ok('pagehide/beforeunload/autosave não gravam', T.snapshot() === snap);
+      G.S.gold = 790; $('lkDl').click(); await wait(200);
+      ok('"Baixar meu jogo" entrega o jogo da memória (ouro 790)', dl.length === 1 && JSON.parse(await dl[0].text()).data.gold === 790, dl.length);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['lock-roubado'] = {          // outra aba tomou o jogo à força: esta para de gravar e oferece baixar o que estava na memória
+    seed() { T.reset(); },
+    async run() {
+      const dl = captureDownloads(); await bootReady(); const G = await startNew(); ok('salvou', G.save().ok); G.S.gold = 888;
+      const snap = T.snapshot(); window.__fake.locks.request(PLAY, { steal: true }, never);
+      ok('aparece a tela "outra aba assumiu o jogo"', await waitVis('lockOverlay', 50) && $('lkTitle').textContent.includes('assumiu'), $('lkTitle').textContent);
+      ok('oferece Baixar e Recarregar', vis('lkDl') && vis('lkReload') && !vis('lkTake'));
+      ok('esta aba não está mais autorizada a gravar', !SaveManager.playLock.allowed() && SaveManager.playLock.state() === 'lost');
+      const r = G.save(true); ok('save() recusado (LockLost), storage idêntico', r.ok === false && r.error.name === 'LockLost' && T.snapshot() === snap);
+      $('lkDl').click(); await wait(200); ok('o arquivo baixado traz o que estava na memória (ouro 888)', dl.length === 1 && JSON.parse(await dl[0].text()).data.gold === 888, dl.length);
+      ok('o aviso do HUD fica vermelho', ind() === 'bad');
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['lock-sem-api'] = {          // navegador sem Web Locks: nada de tela de bloqueio; vale só a defesa por rev
+    seed() { T.reset(); Object.defineProperty(navigator, 'locks', { value: undefined, configurable: true }); },
+    async run() {
+      await bootReady(); ok('sem tela de bloqueio', !vis('lockOverlay')); ok('estado "unsupported" e pode gravar', SaveManager.playLock.state() === 'unsupported' && SaveManager.playLock.allowed());
+      const G = await startNew(); ok('joga e salva', G.save().ok && !!T.mainState());
+      ok('a defesa por rev continua: outra aba salva → esta é velha', (T.setMainState(Object.assign(T.mainState(), { rev: 99 })), !G.save().ok && ind() === 'warn'));
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
     },
   };

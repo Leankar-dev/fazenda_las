@@ -32,10 +32,17 @@
      lastSlot()        o último slot jogado (gravado ao iniciar uma partida) ou null
      peek()            → { raw, rev } do que está gravado no slot (nunca lança)
      peekBest()        → { raw, rev } do texto que load() usaria (slot → bak → tmp): é ESTE que se copia antes de apagar (nunca lança)
-     exportText(S)     → texto do save que seria gravado agora (para baixar quando não dá para gravar; não grava)
+     exportText(S)     → texto do save que seria gravado agora (para baixar quando não dá para gravar, ou "Exportar" na pausa; não grava)
+     exportSlot(n)     → { ok:true, text, summary, recovered?, future? } | { ok:false, reason, raw? }   exporta o slot n (tela de título); sempre um envelope v2 íntegro
+     inspectImport(t)  → { ok:true, state, summary, savedAt, repaired } | { ok:false, reason }   valida o texto de um arquivo SEM gravar (reason: empty · size · json · crc · future · version · shape)
+     importInto(n, t, {force}) → { ok:true, rev, summary, repaired, backedUp } | { ok:false, reason:'nocopy'|'write'|<motivo do inspectImport> }   grava o arquivo no slot n
+                         (re-embrulhado: slot=n, rev do slot +1), com cópia do jogo substituído antes; arquivo recusado = nada gravado
      save(S)           → { ok:true } | { ok:false, error }   error.name: 'Conflict' (outra aba salvou/apagou depois) · 'FutureSchema' (o slot tem
                          um save de versão mais nova: nunca é sobrescrito) · erro do storage (cota, bloqueio)
-     removeMain()      apaga slot + bak + tmp (o legado e as cópias ficam); no slot 1 também encerra a importação do legado (não ressuscita)
+     removeMain()      apaga slot + bak + tmp (o legado e as cópias ficam); no slot 1 também encerra a importação do legado (não ressuscita). false se a cerca recusou
+     probe()           → { ok:true } | { ok:false, error }   grava/lê/apaga uma chave de teste: storage indisponível (modo privado, bloqueado, cheio) já na abertura (2b)
+     fence(fn)         instala a cerca de escrita: fn() → esta aba pode gravar? Sem permissão, save → error.name 'LockLost' e importInto → reason 'lock' (2c)
+     (fora do manager: SaveLib.createDurability → persist() · SaveLib.createPlayLock → Web Locks + "Assumir aqui"; no navegador: SaveManager.durability / .playLock)
      copies            list() · add(raw) → bool · restore(cópia) → bool
      session           reset() · adopt(loaded) · startNew(prev) · takeOver() · isStale()
      cfg               load() · save(obj)           (música/efeitos)
@@ -44,6 +51,7 @@
 
 const SaveLib = (() => {
 const SAVE_SCHEMA = 2, SAVE_MAGIC = 'fazenda_las-save', SAVE_APP = '2026.11.17', SAVE_SLOT = 1, SAVE_SLOTS = 3, SAVE_MAX_COPIES = 3;
+const SAVE_IMPORT_MAX = 2000000;                      // caracteres: um jogo tem 5–20 KB; arquivo maior que isto não é um save (recusado sem nem tentar migrar)
 const SAVE_NS = 'fazenda_las:v2:';
 const SAVE_LEGACY = { main: 'fazenda_leankar_v1', mainOld: 'fazenda_elias_v1', cfg: 'fazenda_leankar_cfg', cfgOld: 'fazenda_elias_cfg', backup: 'fazenda_leankar_v1_backup' };
 const SAVE_LEGACY_MAX_V = 1;                          // o formato "solto" (v1) nunca passou de v:1
@@ -218,8 +226,33 @@ function createSaveManager(adapter, opts = {}) {
     try { adapter.remove(K.tmp); } catch (e) { /* ignora */ }
   }
 
+  /* ---------- cerca de escrita (Fase 2c) ----------
+     `fence(fn)`: o navegador (game.js) instala uma função que diz se ESTA aba pode gravar (hoje: "tenho o bloqueio de jogo?" — Web Locks, §6.7).
+     Aba sem permissão NUNCA grava: save, importInto e removeMain recusam (`LockLost` / `reason:'lock'`) sem tocar no storage. Só leituras e cópias de
+     segurança (proteção, não progresso) continuam. Sem cerca instalada (testes antigos, navegador sem Web Locks) nada muda: vale só a defesa por `rev`. */
+  let gate = null;
+  const fence = fn => { gate = typeof fn === 'function' ? fn : null; };
+  const fenced = () => { try { return !!gate && !gate(); } catch (e) { return false; } };      // uma cerca que lança não pode travar o jogo: a defesa por `rev` continua
+
+  /* ---------- sonda do storage (Fase 2b) ----------
+     Grava, lê e apaga uma chave de teste: pega modo privado / dados do site bloqueados / cota cheia JÁ NA ABERTURA (antes de o jogador perder progresso).
+     { ok:true } | { ok:false, error }. Não deixa nada para trás (e não toca em save nenhum). */
+  function probe() {
+    const key = SAVE_NS + 'probe', val = 'ok:' + now();
+    try {
+      adapter.write(key, val);
+      const back = adapter.read(key);
+      try { adapter.remove(key); } catch (e) { /* uma chave minúscula que ficou não é um problema */ }
+      return back === val ? { ok: true } : { ok: false, error: namedError('ProbeMismatch', 'o navegador não devolveu o que foi gravado') };
+    } catch (e) {
+      try { adapter.remove(key); } catch (e2) { /* ignora */ }
+      return { ok: false, error: e };
+    }
+  }
+
   // Grava o jogo. Devolve { ok: true } ou { ok: false, error }. O AVISO ao jogador (toast, throttle de 60 s) é do jogo.
   function save(S) {
+    if (fenced()) return { ok: false, error: namedError('LockLost', 'outra aba está com o jogo aberto: esta aba não grava') };
     if (session.stale) return { ok: false, error: namedError('Conflict', 'este jogo foi salvo mais recentemente em outra aba') };
     try {
       const curInfo = storedInfo();
@@ -305,8 +338,10 @@ function createSaveManager(adapter, opts = {}) {
     return Object.assign(first || parse(raw), { raw, backedUp: copies.add(raw) });
   }
   function removeMain() {
+    if (fenced()) return false;                                   // aba sem o bloqueio de jogo não apaga nada
     for (const k of [K.slot, K.bak, K.tmp]) { try { adapter.remove(k); } catch (e) { /* storage indisponível */ } }
     if (cur === SAVE_SLOT && !legacyMainDone) legacyMainDone = setMeta({ legacyMain: true });      // o jogador apagou o slot 1: o legado não pode ressuscitar nele
+    return true;
   }
 
   /* ---------- slots ---------- */
@@ -332,14 +367,74 @@ function createSaveManager(adapter, opts = {}) {
     return out;
   }
 
-  /* Texto do save que SERIA gravado agora (para o jogador baixar quando não dá para gravar). Não grava nada. */
+  /* Texto do save que SERIA gravado agora (para o jogador baixar quando não dá para gravar, ou pelo "Exportar" do menu de pausa). Não grava nada. */
   function exportText(S) { need().prepare(S); return JSON.stringify(wrap(need().persist(S), cur, session.rev + 1)); }
+
+  /* ---------- exportar / importar arquivo (Fase 2a) ---------- */
+  /* Exporta o jogo do slot `n` SEM precisar de partida em andamento (tela de título). Devolve o ESTADO já lido e saneado, re-embrulhado em envelope v2
+     (mesmo que o slot tenha texto v1, ou tenha sido recuperado do bak): o arquivo é sempre um v2 íntegro. Não grava nada.
+       { ok:true, text, summary, recovered?, future? }   `future`: o slot guarda um save de versão MAIS NOVA — o texto é o original, byte a byte
+       { ok:false, reason:'empty' | json | crc | version | shape, raw? }      (o jogo oferece "Baixar cópia" do `raw` ilegível por outro caminho) */
+  function exportSlot(n) {
+    if (!validSlot(n)) throw new RangeError('slot inválido: ' + n);
+    return withSlot(n, () => {
+      let r; try { r = load(); } catch (e) { return { ok: false, reason: 'json' }; }
+      if (r.status === 'ok') {
+        const env = wrap(need().persist(r.state), n, r.rev);
+        if (r.savedAt) env.savedAt = r.savedAt;                                  // a data do jogo, não a do clique em Exportar
+        return { ok: true, text: JSON.stringify(env), summary: env.summary, recovered: r.recovered || null };
+      }
+      if (r.status === 'invalid' && r.reason === 'future' && r.raw) return { ok: true, text: r.raw, summary: null, future: true };      // cópia fiel: um jogo mais novo abre o arquivo
+      return r.status === 'invalid' ? { ok: false, reason: r.reason, raw: r.raw } : { ok: false, reason: 'empty' };
+    });
+  }
+  /* Valida o TEXTO de um arquivo (de terceiros!) sem gravar nada: tamanho → JSON → magic/schema/crc → migração → regras do jogo (hydrate).
+       { ok:true, state, summary, savedAt, repaired }   `state` já saneado; `repaired` = quantos dados inválidos foram corrigidos
+       { ok:false, reason: empty | size | json | crc | future | version | shape }
+     O crc é FNV-1a: detecta arquivo danificado/editado à mão SEM recalcular o crc — não é segurança (quem recalcula o crc passa; o sanitizador cuida do resto). */
+  function inspectImport(text) {
+    if (typeof text !== 'string' || !text.trim()) return { ok: false, reason: 'empty' };
+    if (text.length > SAVE_IMPORT_MAX) return { ok: false, reason: 'size' };
+    const r = parse(text);
+    if (r.status !== 'ok') return { ok: false, reason: r.reason || 'shape' };
+    return { ok: true, state: r.state, summary: summarize(r.state), savedAt: r.savedAt || null, repaired: r.repaired || 0 };
+  }
+  /* Grava o arquivo no slot `n` (a tela de título já mostrou o resumo e pediu confirmação). Re-embrulha: o slot do envelope vira `n` e o `rev` continua o
+     do slot (+1, D6: as outras abas notam a troca); o texto do arquivo NUNCA é gravado cru. Antes de sobrescrever, guarda cópia do que o slot tem (peekBest).
+       { ok:true, rev, summary, repaired, backedUp }
+       { ok:false, reason:'nocopy', raw }   não coube a cópia do jogo atual: nada foi alterado; repita com `{ force:true }` (o jogador escolhe perder o jogo atual)
+       { ok:false, reason:'write', error }  o storage recusou (cota/bloqueio): o slot anterior continua intacto
+       { ok:false, reason: empty | size | json | crc | future | version | shape }   arquivo recusado: NADA foi gravado */
+  function importInto(n, text, opts = {}) {
+    if (!validSlot(n)) throw new RangeError('slot inválido: ' + n);
+    if (fenced()) return { ok: false, reason: 'lock' };           // aba sem o bloqueio de jogo não grava (2c)
+    const ins = inspectImport(text);
+    if (!ins.ok) return { ok: false, reason: ins.reason };
+    return withSlot(n, () => {
+      let best, slotRaw, backedUp = true;
+      try {
+        best = peekBest(); slotRaw = readSafe(K.slot);
+        if (best.raw !== null) { backedUp = copies.add(best.raw); if (!backedUp && !opts.force) return { ok: false, reason: 'nocopy', raw: best.raw }; }
+        const curIns = slotRaw !== null ? inspect(slotRaw) : null;
+        const rev = Math.max(slotRaw !== null ? normRev(revOfRaw(slotRaw)) : 0, normRev(best.rev)) + 1;
+        const env = wrap(need().persist(ins.state), n, rev);
+        if (ins.savedAt) env.savedAt = ins.savedAt;
+        safeWrite(JSON.stringify(env), curIns && curIns.ok ? slotRaw : null);                      // o bak só troca por um slot legível; um save futuro ficou na cópia acima
+        if (n === SAVE_SLOT && !legacyMainDone) legacyMainDone = readMeta().legacyMain === true || setMeta({ legacyMain: true });      // o slot 1 agora tem jogo: o legado não ressuscita nele
+        return { ok: true, rev, summary: ins.summary, repaired: ins.repaired, backedUp };
+      } catch (e) {
+        console.warn('falha ao importar', e);
+        return { ok: false, reason: 'write', error: e };
+      }
+    });
+  }
 
   const sessionApi = {
     reset() { session.rev = 0; session.known = false; session.stale = false; session.active = false; session.allowFuture = false; },       // início de uma partida
     adopt(loaded) { const ok = !!loaded && loaded.status === 'ok'; session.rev = ok ? loaded.rev : 0; session.known = ok && loaded.persisted !== false; session.active = true; markLast(); },   // "Continuar" iniciou
     startNew(prev) { session.rev = prev.rev === null ? 0 : prev.rev; session.active = true; session.allowFuture = true; markLast(); },           // jogo novo iniciou: continua a contagem do save substituído
     takeOver() {                                          // "Usar esta aba": guarda o que a outra aba salvou e assume o `rev` dela
+      if (fenced()) return;                               // sem o bloqueio de jogo não há o que assumir: quem decide é o Web Locks
       try { const cur = storedInfo(); if (cur.raw !== null) copies.add(cur.raw); session.rev = cur.rev === null ? 0 : cur.rev; } catch (e) { /* storage indisponível: save() avisa */ }
       session.stale = false; session.known = false;       // known=false: se a outra aba APAGOU o save, esta pode recriá-lo (foi escolha do jogador)
     },
@@ -405,11 +500,140 @@ function createSaveManager(adapter, opts = {}) {
     save(obj) { try { adapter.write(K.cfg, JSON.stringify(obj)); } catch (e) { /* ignore */ } },
   };
 
-  return { SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, configure, kit, deepMerge, load, peek, peekBest, exportText, save, removeMain, useSlot, slots, lastSlot, slot: () => cur, copies, session: sessionApi, cfg, external,
-    format: { MAGIC: SAVE_MAGIC, wrap, inspect, fnv1a, keys: K } };
+  return { SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, IMPORT_MAX: SAVE_IMPORT_MAX, configure, kit, deepMerge, load, peek, peekBest, exportText, exportSlot, inspectImport, importInto, save, removeMain, useSlot, slots, lastSlot, slot: () => cur, copies, session: sessionApi, cfg, external,
+    probe, fence, format: { MAGIC: SAVE_MAGIC, wrap, inspect, fnv1a, keys: K } };
 }
 
-return { create: createSaveManager, fnv1a, safeParse, deepMerge, SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, MAGIC: SAVE_MAGIC, LEGACY: SAVE_LEGACY };
+/* ============================================================
+   Durabilidade do armazenamento (Fase 2b): `navigator.storage.persist()` pede ao navegador para NÃO apagar os dados do site quando faltar espaço
+   (o Safari/iOS ainda apaga o que não é usado há ~7 dias; instalar como PWA e exportar continuam sendo a proteção de verdade). É "best-effort":
+   o Chrome decide sozinho (engajamento), o Firefox pergunta ao jogador — por isso só se pede DEPOIS da 1ª interação, nunca no carregamento.
+   `getStorage()` devolve o `navigator.storage` (ou null): injetado, então roda em Node.
+     status()  → { supported, persisted }                      (não pede nada)
+     request() → { supported, persisted, asked, error? }        (pede, no máximo uma vez por página; se já é persistente, não pergunta)
+   ============================================================ */
+function createDurability(getStorage) {
+  const api = () => { try { const s = getStorage(); return s && typeof s.persist === 'function' ? s : null; } catch (e) { return null; } };
+  const isPersisted = async s => { try { return typeof s.persisted === 'function' ? !!(await s.persisted()) : false; } catch (e) { return false; } };
+  let asked = null;
+  return {
+    async status() { const s = api(); return s ? { supported: true, persisted: await isPersisted(s) } : { supported: false, persisted: false }; },
+    request() {
+      if (asked) return asked;
+      asked = (async () => {
+        const s = api(); if (!s) return { supported: false, persisted: false, asked: false };
+        if (await isPersisted(s)) return { supported: true, persisted: true, asked: false };
+        try { return { supported: true, persisted: !!(await s.persist()), asked: true }; }
+        catch (e) { return { supported: true, persisted: false, asked: true, error: e }; }
+      })();
+      return asked;
+    },
+  };
+}
+
+/* ============================================================
+   Bloqueio de jogo — Web Locks (Fase 2c, §6.7 do plano): prevenção contra DUAS abas jogando o mesmo jogo. Um bloqueio único para o site inteiro
+   (`fazenda_las-play`): quem o tem joga e grava; a 2ª aba não inicia o jogo e oferece "Assumir aqui". A defesa por `rev` (aba velha) continua valendo
+   por baixo — e é a única quando o navegador não tem Web Locks.
+   Protocolo do "Assumir aqui" (BroadcastChannel `fazenda_las`): a aba bloqueada entra na fila do bloqueio e manda `takeover`; a aba que joga SALVA e PARA
+   (`onYield`), libera o bloqueio e responde `released`. Sem resposta em `replyMs` (aba congelada) a aba nova ROUBA (`steal`): a antiga recebe `onLost`
+   e não grava mais (o jogo oferece baixar o que estava na memória). O pedido leva `at`/`ttl`: uma dona que estava CONGELADA e acorda depois do prazo
+   ignora o pedido (senão salvaria por cima do jogo de quem já roubou) — achado do teste com abas reais (tests/real-tabs.js).
+   Tudo injetado (`env`) e lido na hora de usar, então testa em Node com um Web Locks falso:
+     env = { locks() → LockManager|null, channel(nome) → BroadcastChannel|null, setTimeout, clearTimeout, AbortController, id }
+   Estados: idle · waiting (na fila) · held (joga e grava) · released (cedeu) · lost (roubado) · unsupported (sem Web Locks: vale só o `rev`)
+     acquire(ms)   → 'held' | 'blocked' | 'unsupported'   (espera até `ms` na fila — cobre a corrida de uma recarga em que a página antiga ainda não soltou)
+                     'blocked': o pedido CONTINUA na fila: se a outra aba fechar, `whenAvailable()` resolve sozinho
+     whenAvailable() → Promise<boolean>   resolve true quando o bloqueio chegar (depois de 'blocked')
+     takeOver(ms)  → 'held' | 'failed'     pede para a aba dona ceder; sem resposta em `ms`, rouba
+     release()     libera (cede) · allowed()  esta aba pode gravar? (held ou unsupported) · state()
+     onYield(fn)   fn() async: chamada na aba dona quando outra pede o jogo (salvar e parar) · onLost(fn)  o bloqueio foi roubado
+   ============================================================ */
+const PLAY_LOCK = 'fazenda_las-play', PLAY_CHANNEL = 'fazenda_las';
+function createPlayLock(env = {}) {
+  const id = env.id || Math.random().toString(36).slice(2), now = () => (env.now || Date.now)();
+  const later = (fn, ms) => (env.setTimeout || setTimeout)(fn, ms), cancel = t => (env.clearTimeout || clearTimeout)(t);
+  const lm = () => { try { return env.locks ? env.locks() || null : null; } catch (e) { return null; } };
+  let state = 'idle', current = null, chan = null, yielding = false;
+  const on = { yield: null, lost: null };
+  const fire = name => { try { if (on[name]) Promise.resolve(on[name]()).catch(e => console.warn('playLock.' + name + ' lançou', e)); } catch (e) { console.warn('playLock.' + name + ' lançou', e); } };
+
+  function post(msg) { try { if (chan) chan.postMessage(Object.assign({ from: id }, msg)); } catch (e) { /* sem canal: o `steal` resolve */ } }
+  function openChannel() {
+    if (chan) return;
+    try { chan = env.channel ? env.channel(PLAY_CHANNEL) : null; } catch (e) { chan = null; }
+    if (chan) chan.onmessage = ev => {
+      const m = ev && ev.data;
+      if (!m || typeof m !== 'object' || m.from === id || m.t !== 'takeover' || state !== 'held') return;
+      // Pedido VENCIDO (aba que estava congelada e acordou): quem pediu já esgotou o prazo e ROUBOU o bloqueio — salvar agora gravaria por cima do jogo dele.
+      // Ignora; o aviso de "perdi o bloqueio" chega em seguida (onLost). Pedido sem `at`/`ttl` (outra versão do jogo) vale como novo.
+      if (Number.isFinite(m.at) && Number.isFinite(m.ttl) && now() - m.at > m.ttl) return;
+      yieldTo(m.from);
+    };
+  }
+  async function yieldTo(to) {                         // outra aba pediu o jogo: salva e para (onYield), solta o bloqueio e avisa
+    if (yielding) return; yielding = true;
+    try { if (on.yield) await on.yield(); } catch (e) { console.warn('playLock.onYield lançou', e); }
+    release(); post({ t: 'released', to }); yielding = false;
+  }
+  // um pedido ao LockManager; o bloqueio fica preso até `req.release()`. `granted` resolve quando concedido e rejeita se o pedido falhar ou for cancelado.
+  function startRequest(steal) {
+    const c = new (env.AbortController || AbortController)(), req = { c, done: false, release: null };
+    req.granted = new Promise((resolve, reject) => {
+      let p;
+      try {
+        p = lm().request(PLAY_LOCK, steal ? { steal: true } : { signal: c.signal }, () => new Promise(res => { req.release = res; req.done = true; if (current === req) state = 'held'; resolve(); }));
+      } catch (e) { reject(e); return; }
+      p.then(() => { /* soltamos nós mesmos */ }, e => {
+        if (!req.done) reject(e);                                                // nunca concedido: erro ou cancelado
+        else if (current === req) { current = null; state = 'lost'; fire('lost'); }      // concedido e depois quebrado: outra aba usou `steal`
+      });
+    });
+    req.granted.catch(() => { /* quem espera trata; ninguém esperando não pode virar "unhandled rejection" */ });
+    current = req; return req;
+  }
+  const race = (req, ms) => new Promise(resolve => {
+    const t = later(() => resolve('timeout'), ms);
+    req.granted.then(() => { cancel(t); resolve('held'); }, () => { cancel(t); resolve('error'); });
+  });
+  function release() {
+    const r = current; if (!r || !r.done) return false;
+    current = null; state = 'released'; try { r.release(); } catch (e) { /* ignora */ } return true;
+  }
+
+  return {
+    id, state: () => state, allowed: () => state === 'held' || state === 'unsupported',
+    onYield(fn) { on.yield = fn; }, onLost(fn) { on.lost = fn; },
+    async acquire(ms = 1500) {
+      if (state === 'held' || state === 'unsupported') return state;
+      if (!lm()) { state = 'unsupported'; return 'unsupported'; }
+      let req; try { req = startRequest(false); } catch (e) { current = null; state = 'unsupported'; return 'unsupported'; }
+      state = 'waiting';
+      const r = await race(req, ms);
+      if (r === 'held') { openChannel(); return 'held'; }
+      if (r === 'error') { current = null; state = 'unsupported'; return 'unsupported'; }      // ex.: SecurityError (contexto sem Web Locks): vale só o `rev`
+      return 'blocked';
+    },
+    async whenAvailable() {
+      const req = current; if (!req) return state === 'held';
+      try { await req.granted; openChannel(); return true; } catch (e) { return false; }
+    },
+    async takeOver(ms = 3000) {
+      if (state === 'held' || state === 'unsupported') return 'held';
+      if (!lm()) { state = 'unsupported'; return 'held'; }
+      openChannel();
+      let req = current && state === 'waiting' ? current : startRequest(false);      // continua na fila que já existe: a ordem de chegada vale
+      state = 'waiting';
+      post({ t: 'takeover', at: now(), ttl: ms });                                   // `at`/`ttl`: a dona ignora o pedido se ele chegar depois do prazo (aba congelada que acorda)
+      if (await race(req, ms) === 'held') return 'held';
+      req.c.abort();                                                                // ninguém cedeu: rouba (a dona perde o bloqueio e recebe `onLost`)
+      try { const s = startRequest(true); await s.granted; return 'held'; } catch (e) { current = null; state = 'idle'; return 'failed'; }
+    },
+    release,
+  };
+}
+
+return { create: createSaveManager, createDurability, createPlayLock, fnv1a, safeParse, deepMerge, SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, MAGIC: SAVE_MAGIC, LEGACY: SAVE_LEGACY, PLAY_LOCK, PLAY_CHANNEL };
 })();
 
 /* instância do navegador + adaptador: o ÚNICO ponto do projeto que toca `localStorage` */
@@ -420,4 +644,10 @@ const SaveManager = SaveLib.create({
   keys() { const out = []; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k) out.push(k); } return out; },
 });
 if (typeof window !== 'undefined') window.addEventListener('storage', e => SaveManager.external(e.key, e.newValue));
+/* Fase 2b/2c — peças do navegador (tudo lido na hora de usar: `navigator.storage`, `navigator.locks` e `BroadcastChannel` podem faltar ou ser trocados nos testes) */
+SaveManager.durability = SaveLib.createDurability(() => navigator.storage);
+SaveManager.playLock = SaveLib.createPlayLock({
+  locks: () => navigator.locks,
+  channel: name => typeof BroadcastChannel === 'function' ? new BroadcastChannel(name) : null,
+});
 if (typeof module !== 'undefined' && module.exports) module.exports = SaveLib;      // testes em Node: require('../save.js').create(adaptadorFalso)

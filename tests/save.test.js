@@ -450,6 +450,231 @@ test('exportText: texto do save que seria gravado (slot em uso, rev+1), sem grav
   assert.strictEqual(a.read(slotKey(2)), before, 'não grava');
 });
 
+/* ============================ exportar / importar arquivo (Fase 2a) ============================ */
+const snapshot = a => JSON.stringify([...a.m.entries()].sort());
+const playSlot = (M, n, st) => { M.useSlot(n); M.session.adopt({ status: 'none' }); assert.ok(M.save(st).ok); };       // grava um jogo no slot n (sessão limpa)
+test('exportSlot: envelope v2 íntegro do slot pedido (campo slot, rev e savedAt do jogo), sem gravar nada e sem mudar o slot em uso', () => {
+  const a = mem(), M = mgr(a); playSlot(M, 2, goodState(7, 700)); M.save(goodState(8, 800)); M.useSlot(1);
+  const stored = JSON.parse(a.read(slotKey(2))); stored.savedAt = '2026-03-03T03:03:03.000Z'; a.m.set(slotKey(2), JSON.stringify(stored));      // data DIFERENTE do relógio falso: prova que é a do jogo, não a do clique
+  const before = snapshot(a), r = M.exportSlot(2), env = JSON.parse(r.text);
+  assert.ok(r.ok && M.format.inspect(r.text).ok); assert.strictEqual(env.slot, 2); assert.strictEqual(env.rev, 2); assert.strictEqual(env.data.day, 8);
+  assert.strictEqual(env.savedAt, '2026-03-03T03:03:03.000Z'); assert.deepStrictEqual(r.summary, { char: 'fazendeira', name: 'Karen', day: 8, gold: 800, earned: 40 });
+  assert.strictEqual(M.slot(), 1, 'exportar não muda o slot em uso'); assert.strictEqual(snapshot(a), before, 'não grava nada');
+  assert.deepStrictEqual(M.exportSlot(3), { ok: false, reason: 'empty' }); for (const bad of [0, 4, '2', null]) assert.throws(() => M.exportSlot(bad), RangeError);
+});
+test('exportSlot: slot com texto v1 solto, ou "recuperado" do bak, sai como v2 íntegro com o jogo legível; ilegível não exporta; futuro sai byte a byte', () => {
+  let a = mem(), M = mgr(a); a.m.set(slotKey(1), JSON.stringify(Object.assign({ v: 1, rev: 4 }, goodState(5, 500))));
+  let r = M.exportSlot(1), env = JSON.parse(r.text); assert.ok(r.ok); assert.strictEqual(env.schema, 2); assert.ok(!('v' in env.data) && !('rev' in env.data)); assert.strictEqual(env.rev, 4); assert.strictEqual(env.data.day, 5);
+  a = mem(); M = mgr(a); playSlot(M, 1, goodState(5, 500)); M.save(goodState(6, 600)); a.m.set(slotKey(1), '{"magic":"fazenda_las-save","schema":2,"data":{x:');
+  r = mgr(a).exportSlot(1); assert.ok(r.ok && r.recovered === 'bak'); assert.strictEqual(JSON.parse(r.text).data.day, 5, 'o jogo legível (bak)');
+  a = mem(); a.m.set(slotKey(1), '{lixo'); r = mgr(a).exportSlot(1); assert.deepStrictEqual([r.ok, r.reason, r.raw], [false, 'json', '{lixo']);
+  const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: 2, data: { n: 1 }, crc: 'x' }); a = mem(); a.m.set(slotKey(1), fut);
+  r = mgr(a).exportSlot(1); assert.ok(r.ok && r.future && r.text === fut, 'cópia fiel do save de versão mais nova');
+});
+test('inspectImport: aceita v2 e v1 solto (resumo do estado saneado); recusa vazio, grande, json, crc, truncado, futuro, versão e shape — sem gravar nada', () => {
+  const a = mem(), M = mgr(a), I = t => M.inspectImport(t), env = M.format.wrap(goodState(4, 444), 1, 3), txt = JSON.stringify(env);
+  let r = I(txt); assert.ok(r.ok); assert.deepStrictEqual(r.summary, { char: 'fazendeira', name: 'Karen', day: 4, gold: 444, earned: 40 }); assert.strictEqual(r.repaired, 0); assert.strictEqual(r.savedAt, '2026-11-17T12:00:00.000Z');
+  r = I(JSON.stringify(Object.assign({ v: 1, rev: 9 }, goodState(2, 22)))); assert.ok(r.ok); assert.strictEqual(r.summary.day, 2); assert.strictEqual(r.savedAt, null);
+  r = I(JSON.stringify(Object.assign({ v: 1 }, goodState(2, 22), { lixo: 1 }))); assert.ok(r.ok); assert.strictEqual(r.repaired, 1, 'dados corrigidos são contados');
+  assert.strictEqual(I('').reason, 'empty'); assert.strictEqual(I('   \n').reason, 'empty'); assert.strictEqual(I(null).reason, 'empty'); assert.strictEqual(I(undefined).reason, 'empty');
+  assert.strictEqual(I('x'.repeat(SaveLib.create(mem()).IMPORT_MAX + 1)).reason, 'size'); assert.strictEqual(I('{lixo').reason, 'json'); assert.strictEqual(I('[1,2]').reason, 'json');
+  assert.strictEqual(I(JSON.stringify(Object.assign({}, env, { data: Object.assign({}, env.data, { gold: 999999 }) }))).reason, 'crc', 'editado à mão sem recalcular o crc');
+  assert.strictEqual(I(txt.slice(0, Math.floor(txt.length * .6))).reason, 'json'); assert.strictEqual(I(JSON.stringify(Object.assign({}, env, { schema: 3 }))).reason, 'future');
+  assert.strictEqual(I(JSON.stringify(Object.assign({}, env, { schema: 0 }))).reason, 'version'); assert.strictEqual(I(JSON.stringify({ day: 1 })).reason, 'version');
+  assert.strictEqual(I(JSON.stringify(M.format.wrap({ day: 1, soil: [] }, 1, 1))).reason, 'shape', 'crc ok mas faltam os dados do mapa');
+  assert.strictEqual(mgr(mem(), { hydrate() { throw new Error('x'); }, prepare() {}, persist: S => S }).inspectImport(txt).reason, 'shape', 'hydrate que lança = recusa, não exceção');
+  assert.strictEqual(a.m.size, 0, 'validar nunca grava');
+});
+test('inspectImport: __proto__/constructor do arquivo não chegam ao estado', () => {
+  const M = mgr(mem()), raw = '{"__proto__":{"zzz":1},"constructor":{"x":1},"v":1,"day":2,"gold":5,"min":500,"soil":' + JSON.stringify(new Array(MAPSIZE).fill(0)) + ',"crops":{}}';
+  const r = M.inspectImport(raw); assert.ok(r.ok); assert.strictEqual(Object.getPrototypeOf(r.state), Object.prototype); assert.strictEqual(r.state.zzz, undefined);
+});
+test('importInto: slot vazio — grava re-embrulhado (slot do destino, rev 1, crc ok, savedAt do arquivo), só nesse slot; sem cópia a fazer', () => {
+  const a = mem(), M = mgr(a), file = JSON.stringify(Object.assign(M.format.wrap(goodState(9, 900), 1, 41), { savedAt: '2026-05-05T10:00:00.000Z' })); M.useSlot(2);
+  const r = M.importInto(3, file); assert.ok(r.ok); assert.strictEqual(r.rev, 1); assert.deepStrictEqual(r.summary, { char: 'fazendeira', name: 'Karen', day: 9, gold: 900, earned: 40 }); assert.strictEqual(r.backedUp, true);
+  const env = JSON.parse(a.read(slotKey(3))); assert.strictEqual(env.slot, 3, 'o slot do envelope é o DESTINO (o arquivo dizia 1)'); assert.strictEqual(env.rev, 1); assert.strictEqual(env.savedAt, '2026-05-05T10:00:00.000Z');
+  assert.ok(M.format.inspect(a.read(slotKey(3))).ok); assert.strictEqual(env.data.gold, 900); assert.ok(!('rev' in env.data));
+  assert.strictEqual(a.read(slotKey(1)), null); assert.strictEqual(a.read(slotKey(2)), null); assert.strictEqual(copiesOf(a).length, 0); assert.strictEqual(M.slot(), 2, 'não muda o slot em uso'); assert.strictEqual(a.read(slotKey(3) + ':tmp'), null);
+  assert.deepStrictEqual([mgr(a).slots()[2].status, mgr(a).slots()[2].summary.day], ['ok', 9], 'o título enxerga o jogo importado');
+});
+test('importInto: slot ocupado — guarda cópia do jogo substituído, rotaciona o bak e o rev CONTINUA (+1) para as outras abas notarem', () => {
+  const a = mem(), M = mgr(a); playSlot(M, 1, goodState(3, 300)); M.save(goodState(3, 301)); M.save(goodState(3, 302));
+  const old = a.read(slotKey(1)); assert.strictEqual(JSON.parse(old).rev, 3);
+  const r = M.importInto(1, JSON.stringify(M.format.wrap(goodState(9, 900), 2, 1))); assert.ok(r.ok); assert.strictEqual(r.rev, 4, 'rev do slot + 1, não o do arquivo');
+  assert.strictEqual(JSON.parse(a.read(slotKey(1))).data.day, 9); assert.strictEqual(a.read(slotKey(1) + ':bak'), old, 'o jogo anterior é o bak'); assert.ok(copiesOf(a).some(c => c.raw === old), 'e também uma cópia');
+  const other = mgr(a); other.useSlot(1); other.session.adopt({ status: 'ok', rev: 3 }); assert.ok(!other.save(goodState()).ok && other.session.isStale(), 'uma aba que tinha o jogo antigo vira "velha"');
+});
+test('importInto: slot "recuperado" (danificado + bak bom) — a cópia é a do jogo LEGÍVEL; slot com save FUTURO é preservado em cópia', () => {
+  let a = mem(), M = mgr(a); playSlot(M, 1, goodState(5, 500)); M.save(goodState(6, 600)); const bak = a.read(slotKey(1) + ':bak'); a.m.set(slotKey(1), '{"magic":"fazenda_las-save","schema":2,"data":{x:');
+  M = mgr(a); assert.ok(M.importInto(1, JSON.stringify(M.format.wrap(goodState(9, 900), 1, 1))).ok);
+  assert.ok(copiesOf(a).some(c => c.raw === bak), 'o jogo legível (dia 5) ficou numa cópia'); assert.ok(M.format.inspect(a.read(slotKey(1))).ok); assert.strictEqual(JSON.parse(a.read(slotKey(1))).data.day, 9);
+  a = mem(); M = mgr(a); const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: 6, data: { n: 1 }, crc: 'x' }); a.m.set(slotKey(1), fut);
+  const r = M.importInto(1, JSON.stringify(M.format.wrap(goodState(9, 900), 1, 1))); assert.ok(r.ok); assert.strictEqual(r.rev, 7, 'o rev continua o do save futuro');
+  assert.ok(copiesOf(a).some(c => c.raw === fut), 'o save de versão mais nova não se perde'); assert.strictEqual(a.read(slotKey(1) + ':bak'), null, 'e não vira bak');
+});
+test('importInto: arquivo recusado NÃO grava nada (nem cópia, nem rev, nem meta); slot inválido lança', () => {
+  const a = mem(), M = mgr(a); playSlot(M, 1, goodState(3, 300)); const before = snapshot(a), good = JSON.stringify(M.format.wrap(goodState(9, 900), 1, 1));
+  for (const bad of ['', '{lixo', good.slice(0, 80), JSON.stringify(Object.assign(JSON.parse(good), { data: Object.assign(JSON.parse(good).data, { gold: 901 }) })), JSON.stringify(Object.assign(JSON.parse(good), { schema: 3 })), JSON.stringify(M.format.wrap({ day: 1, soil: [] }, 1, 1))]) {
+    const r = M.importInto(1, bad); assert.strictEqual(r.ok, false); assert.ok(['empty', 'json', 'crc', 'future', 'shape'].includes(r.reason), r.reason); assert.strictEqual(snapshot(a), before, 'nada gravado: ' + r.reason);
+  }
+  for (const n of [0, 4, '1', null]) assert.throws(() => M.importInto(n, good), RangeError);
+});
+test('importInto: cópia que não cabe → "nocopy" sem alterar nada; com force grava; cota que estoura na gravação → "write" e o slot anterior fica intacto', () => {
+  const a = mem(), M = mgr(a); playSlot(M, 1, goodState(3, 300)); const old = a.read(slotKey(1)), file = JSON.stringify(M.format.wrap(goodState(9, 900), 1, 1)), before = snapshot(a);
+  a.failOn = (op, k) => { if (op === 'w' && k.startsWith('fazenda_las:v2:copy:')) { const e = new Error('cota'); e.name = 'QuotaExceededError'; throw e; } };      // só a cópia não cabe
+  let r = M.importInto(1, file); assert.deepStrictEqual([r.ok, r.reason, r.raw], [false, 'nocopy', old]); assert.strictEqual(snapshot(a), before, 'nada alterado');
+  r = M.importInto(1, file, { force: true }); assert.ok(r.ok); assert.strictEqual(r.backedUp, false); assert.strictEqual(JSON.parse(a.read(slotKey(1))).data.day, 9);
+  const b = mem(), N = mgr(b); playSlot(N, 1, goodState(3, 300)); const old2 = b.read(slotKey(1)); b.failOn = (op, k) => { if (op === 'w' && k.endsWith(':tmp')) { const e = new Error('cota'); e.name = 'QuotaExceededError'; throw e; } };
+  r = N.importInto(1, JSON.stringify(N.format.wrap(goodState(9, 900), 1, 1))); assert.deepStrictEqual([r.ok, r.reason, r.error.name], [false, 'write', 'QuotaExceededError']);
+  assert.strictEqual(b.read(slotKey(1)), old2, 'o slot anterior continua intacto'); assert.strictEqual(b.read(slotKey(1) + ':tmp'), null);
+});
+test('importInto no slot 1 encerra a importação do legado (não ressuscita); nos outros slots não mexe nele', () => {
+  const a = mem(); a.m.set('fazenda_leankar_v1', FX('save_v1_atual')); const M = mgr(a), file = JSON.stringify(M.format.wrap(goodState(9, 900), 1, 1));
+  assert.ok(M.importInto(2, file).ok); assert.ok(!(JSON.parse(a.read(K(M).meta) || '{}').legacyMain), 'slot 2: legado intacto');
+  assert.ok(M.importInto(1, file).ok); assert.strictEqual(JSON.parse(a.read(K(M).meta)).legacyMain, true);
+  M.useSlot(1); M.removeMain(); assert.strictEqual(mgr(a).load().status, 'none', 'apagar depois de importar não traz o legado de volta'); assert.strictEqual(a.read('fazenda_leankar_v1'), FX('save_v1_atual'));
+});
+test('ida e volta: exportText/exportSlot → storage novo → importInto → load devolve o MESMO estado (campo a campo, inclusive aninhado)', () => {
+  const st = goodState(12, 1234, { crops: { '3,4': { t: 'cenoura', age: 2 } }, up: { basket: 1, can: 0, boots: 0 }, obs: [[1, 2, 'rock']], names: { fazendeira: 'Ana', fazendeiro: 'Zé' } });
+  const a = mem(), M = mgr(a); playSlot(M, 2, st); const viaSlot = M.exportSlot(2).text; M.session.adopt(M.load()); const viaMenu = M.exportText(st);
+  for (const [nome, file] of [['exportSlot', viaSlot], ['exportText', viaMenu]]) {
+    const b = mem(), N = mgr(b); assert.ok(N.importInto(1, file).ok, nome); N.useSlot(1); const r = N.load();
+    assert.strictEqual(r.status, 'ok', nome); assert.strictEqual(r.repaired, 0, nome); assert.deepStrictEqual(r.state, JSON.parse(JSON.stringify(st)), nome + ': estado idêntico');
+  }
+});
+
+/* ============================ Fase 2b: sonda do storage e persist() ============================ */
+test('probe: storage ok → ok e não deixa chave nenhuma nem mexe no save; só a chave de teste é tocada', () => {
+  const a = mem(), M = mgr(a); playSlot(M, 1, goodState(4, 400)); const before = snapshot(a); a.log.length = 0;
+  assert.deepStrictEqual(M.probe(), { ok: true }); assert.strictEqual(snapshot(a), before, 'nada sobrou');
+  assert.ok(a.log.every(l => l.endsWith(':probe')), 'só a chave de teste: ' + a.log);
+});
+test('probe: modo privado/bloqueado (lança), cota cheia, storage que não devolve o que gravou — sempre { ok:false, error }, sem lançar', () => {
+  const a = mem(); a.failOn = () => { const e = new Error('bloqueado'); e.name = 'SecurityError'; throw e; };
+  let r = mgr(a).probe(); assert.deepStrictEqual([r.ok, r.error.name], [false, 'SecurityError']);
+  const q = mem({ quota: 10 }); r = mgr(q).probe(); assert.deepStrictEqual([r.ok, r.error.name], [false, 'QuotaExceededError']);
+  const z = mem(); z.read = () => null; r = mgr(z).probe(); assert.deepStrictEqual([r.ok, r.error.name], [false, 'ProbeMismatch']);
+  const w = mem(); w.remove = () => { throw new Error('não apaga'); }; assert.ok(mgr(w).probe().ok, 'falhar ao apagar a chave de teste não é falha do storage');
+});
+test('durability: sem API, já persistente (não pergunta), concedido, negado, persist() que lança; pergunta no máximo uma vez', async () => {
+  const D = SaveLib.createDurability;
+  assert.deepStrictEqual(await D(() => null).request(), { supported: false, persisted: false, asked: false });
+  assert.deepStrictEqual(await D(() => { throw new Error('x'); }).status(), { supported: false, persisted: false });
+  let asked = 0; const mk = (persisted, grant) => ({ persisted: async () => persisted, persist: async () => { asked++; if (grant instanceof Error) throw grant; return grant; } });
+  assert.deepStrictEqual(await D(() => mk(true, false)).request(), { supported: true, persisted: true, asked: false }); assert.strictEqual(asked, 0, 'já é persistente: não pede');
+  let d = D(() => mk(false, true)); assert.deepStrictEqual(await d.request(), { supported: true, persisted: true, asked: true });
+  await d.request(); await d.request(); assert.strictEqual(asked, 1, 'uma pergunta só por página');
+  assert.deepStrictEqual(await D(() => mk(false, false)).request(), { supported: true, persisted: false, asked: true });
+  const bad = await D(() => mk(false, new Error('recusou'))).request(); assert.deepStrictEqual([bad.supported, bad.persisted, bad.asked, bad.error.message], [true, false, true, 'recusou']);
+  assert.deepStrictEqual(await D(() => mk(true, true)).status(), { supported: true, persisted: true }); assert.deepStrictEqual(await D(() => ({ persist: async () => true })).status(), { supported: true, persisted: false });
+});
+
+/* ============================ Fase 2c: cerca de escrita e Web Locks ============================ */
+test('fence: aba sem permissão NUNCA grava (save, importInto, removeMain, takeOver) e o storage fica idêntico; leituras e exportar continuam', () => {
+  const a = mem(), M = mgr(a); playSlot(M, 1, goodState(4, 400)); const file = JSON.stringify(M.format.wrap(goodState(9, 900), 1, 1));
+  let allowed = false; M.fence(() => allowed); const before = snapshot(a);
+  let r = M.save(goodState(5, 500)); assert.deepStrictEqual([r.ok, r.error.name], [false, 'LockLost']);
+  assert.deepStrictEqual(M.importInto(2, file), { ok: false, reason: 'lock' }); assert.strictEqual(M.removeMain(), false); M.session.stale = true; M.session.takeOver();
+  assert.strictEqual(snapshot(a), before, 'nada foi gravado nem apagado');
+  assert.strictEqual(M.load().status, 'ok'); assert.strictEqual(M.slots()[0].status, 'ok'); assert.ok(M.exportSlot(1).ok); assert.ok(M.exportText(goodState(5, 500)).length > 0);
+  allowed = true; assert.ok(M.save(goodState(5, 500)).ok, 'com permissão grava'); assert.ok(M.importInto(2, file).ok); assert.strictEqual(M.removeMain(), true);
+});
+test('fence: sem cerca nada muda; cerca que lança não trava o jogo (vale a defesa por rev); fence(null) remove', () => {
+  const a = mem(), M = mgr(a); playSlot(M, 1, goodState(1, 1)); assert.ok(M.save(goodState(2, 2)).ok);
+  M.fence(() => { throw new Error('quebrou'); }); assert.ok(M.save(goodState(3, 3)).ok); M.fence(() => false); assert.strictEqual(M.save(goodState(4, 4)).error.name, 'LockLost');
+  M.fence(null); assert.ok(M.save(goodState(4, 4)).ok);
+});
+
+/* Web Locks falso, fiel à especificação no que importa: fila por nome, `ifAvailable`, `signal`, `steal` (quebra o dono: o request dele REJEITA com AbortError). */
+function fakeLocks() {
+  const names = {}, abortErr = () => { const e = new Error('abortado'); e.name = 'AbortError'; return e; };
+  const slot = name => names[name] || (names[name] = { holder: null, queue: [] });
+  function grant(n, e) {
+    e.state = 'held'; n.holder = e;
+    Promise.resolve().then(() => e.cb({})).then(v => { if (e.state === 'held') { e.state = 'done'; n.holder = null; e.resolve(v); pump(n); } }, err => { if (e.state === 'held') { e.state = 'done'; n.holder = null; e.reject(err); pump(n); } });
+  }
+  function pump(n) { if (!n.holder && n.queue.length) grant(n, n.queue.shift()); }
+  return {
+    holder: name => !!slot(name).holder, queued: name => slot(name).queue.length,
+    request(name, opts, cb) {
+      if (typeof opts === 'function') { cb = opts; opts = {}; }
+      const n = slot(name);
+      return new Promise((resolve, reject) => {
+        const e = { resolve, reject, cb, state: 'queued' };
+        if (opts.signal) { if (opts.signal.aborted) return reject(abortErr()); opts.signal.addEventListener('abort', () => { if (e.state === 'queued') { e.state = 'aborted'; n.queue = n.queue.filter(x => x !== e); reject(abortErr()); } }); }
+        if (opts.steal) { if (n.holder) { const h = n.holder; h.state = 'broken'; n.holder = null; h.reject(abortErr()); } grant(n, e); return; }
+        if (opts.ifAvailable && n.holder) { Promise.resolve().then(() => cb(null)).then(resolve, reject); return; }
+        n.queue.push(e); pump(n);
+      });
+    },
+  };
+}
+/* barramento de BroadcastChannel falso: entrega às OUTRAS instâncias do mesmo nome (como o real), de forma assíncrona */
+function fakeBus() {
+  const all = [];
+  return name => { const c = { name, onmessage: null, postMessage(data) { for (const o of all) if (o !== c && o.name === name && o.onmessage) setTimeout(() => o.onmessage({ data }), 0); } }; all.push(c); return c; };
+}
+const tab = (id, locks, bus) => SaveLib.createPlayLock({ id, locks: () => locks, channel: bus });
+const tick = ms => new Promise(r => setTimeout(r, ms));
+
+test('playLock: sem Web Locks (ausente, ou SecurityError) → "unsupported": joga e grava, vale só o rev', async () => {
+  let t = SaveLib.createPlayLock({ id: 'a', locks: () => undefined }); assert.strictEqual(await t.acquire(20), 'unsupported'); assert.ok(t.allowed());
+  t = SaveLib.createPlayLock({ id: 'b', locks: () => ({ request() { const e = new Error('negado'); e.name = 'SecurityError'; throw e; } }) }); assert.strictEqual(await t.acquire(20), 'unsupported'); assert.ok(t.allowed());
+  t = SaveLib.createPlayLock({ id: 'c', locks: () => ({ request: () => Promise.reject(Object.assign(new Error('negado'), { name: 'SecurityError' })) }) }); assert.strictEqual(await t.acquire(20), 'unsupported'); assert.ok(t.allowed(), 'rejeição imediata também');
+  t = SaveLib.createPlayLock({ id: 'd', locks: () => { throw new Error('navigator.locks lança'); } }); assert.strictEqual(await t.acquire(20), 'unsupported');
+  assert.strictEqual(await t.takeOver(20), 'held', 'sem Web Locks "assumir" não bloqueia ninguém');
+});
+test('playLock: a 1ª aba joga; a 2ª fica "blocked" e NÃO grava; quando a 1ª fecha/solta, a 2ª recebe sozinha (whenAvailable) — sem roubar', async () => {
+  const L = fakeLocks(), bus = fakeBus(), A = tab('A', L, bus), B = tab('B', L, bus);
+  assert.strictEqual(await A.acquire(50), 'held'); assert.ok(A.allowed());
+  assert.strictEqual(await B.acquire(40), 'blocked'); assert.ok(!B.allowed()); assert.strictEqual(B.state(), 'waiting'); assert.strictEqual(L.queued('fazenda_las-play'), 1, 'continua na fila');
+  const got = B.whenAvailable(); A.release(); assert.strictEqual(await got, true); assert.ok(B.allowed()); assert.ok(!A.allowed()); assert.strictEqual(B.state(), 'held');
+});
+test('playLock: corrida de recarga — a página antiga solta o bloqueio logo depois: a nova espera na fila e ganha, sem tela de "bloqueado"', async () => {
+  const L = fakeLocks(), bus = fakeBus(), old = tab('old', L, bus), nova = tab('new', L, bus);
+  await old.acquire(50); setTimeout(() => old.release(), 30); assert.strictEqual(await nova.acquire(300), 'held');
+});
+test('playLock: "Assumir aqui" cooperativo — a dona SALVA e PARA antes de soltar; só então a nova joga; a dona não grava mais (released), sem onLost', async () => {
+  const L = fakeLocks(), bus = fakeBus(), A = tab('A', L, bus), B = tab('B', L, bus), seq = [];
+  A.onYield(async () => { seq.push('A salva'); await tick(40); seq.push('A parou'); }); A.onLost(() => seq.push('LOST'));
+  await A.acquire(50); assert.strictEqual(await B.acquire(30), 'blocked');
+  const r = await B.takeOver(500); seq.push('B joga');
+  assert.strictEqual(r, 'held'); assert.deepStrictEqual(seq, ['A salva', 'A parou', 'B joga'], 'a ordem importa: nunca dois jogando'); assert.ok(B.allowed()); assert.ok(!A.allowed()); assert.strictEqual(A.state(), 'released');
+});
+test('playLock: onYield que lança não prende o bloqueio (a outra aba assume do mesmo jeito)', async () => {
+  const L = fakeLocks(), bus = fakeBus(), A = tab('A', L, bus), B = tab('B', L, bus); A.onYield(() => { throw new Error('falhou ao salvar'); });
+  await A.acquire(50); await B.acquire(30); assert.strictEqual(await B.takeOver(500), 'held'); assert.ok(!A.allowed());
+});
+test('playLock: dona que não responde (aba congelada, sem canal) → a nova ROUBA após o prazo; a dona recebe onLost UMA vez e não grava mais', async () => {
+  const L = fakeLocks(), A = tab('A', L, () => null), B = tab('B', L, () => null); let lost = 0; A.onLost(() => lost++);
+  await A.acquire(50); assert.strictEqual(await B.acquire(30), 'blocked');
+  assert.strictEqual(await B.takeOver(60), 'held'); await tick(10);
+  assert.strictEqual(lost, 1); assert.strictEqual(A.state(), 'lost'); assert.ok(!A.allowed()); assert.ok(B.allowed()); assert.strictEqual(L.queued('fazenda_las-play'), 0, 'o pedido antigo da nova aba foi cancelado (sem fila fantasma)');
+  A.release(); assert.ok(B.allowed(), 'a dona que perdeu não derruba a nova ao tentar soltar');
+});
+test('playLock: cerca + bloqueio — depois de roubada, a aba antiga recebe LockLost e o storage não muda; a nova grava', async () => {
+  const L = fakeLocks(), a = mem(), M = mgr(a), A = tab('A', L, () => null), B = tab('B', L, () => null);
+  M.fence(A.allowed); await A.acquire(50); playSlot(M, 1, goodState(4, 400)); assert.ok(M.save(goodState(5, 500)).ok);
+  await B.acquire(20); await B.takeOver(30); await tick(10); const before = snapshot(a);
+  assert.strictEqual(M.save(goodState(6, 600)).error.name, 'LockLost'); assert.strictEqual(snapshot(a), before);
+});
+test('playLock: pedido VENCIDO (aba congelada que acorda depois do prazo) é ignorado: não salva nem solta; pedido sem prazo ou dentro do prazo vale', async () => {
+  const L = fakeLocks(), bus = fakeBus(), A = tab('A', L, bus), outra = bus('fazenda_las'); let yielded = 0, clock = 100000;
+  const A2 = SaveLib.createPlayLock({ id: 'A2', locks: () => fakeLocks(), channel: bus, now: () => clock });          // aba com relógio controlado, em outro "mundo" de bloqueios
+  A.onYield(async () => { yielded++; });
+  await A.acquire(50); outra.postMessage({ t: 'takeover', from: 'B', at: Date.now() - 10000, ttl: 3000 }); await tick(20);
+  assert.strictEqual(yielded, 0, 'pedido de 10 s atrás com prazo de 3 s: vencido'); assert.ok(A.allowed(), 'continua com o bloqueio');
+  outra.postMessage({ t: 'takeover', from: 'B', at: Date.now() - 500, ttl: 3000 }); await tick(20);
+  assert.strictEqual(yielded, 1, 'dentro do prazo: cede'); assert.ok(!A.allowed());
+  const L2 = fakeLocks(), C = SaveLib.createPlayLock({ id: 'C', locks: () => L2, channel: bus, now: () => clock }); let y2 = 0; C.onYield(async () => { y2++; });
+  await C.acquire(50); outra.postMessage({ t: 'takeover', from: 'B' }); await tick(20); assert.strictEqual(y2, 1, 'sem at/ttl (outra versão): vale como novo');
+  void A2;
+});
+test('playLock: takeOver sem fila prévia (nunca fez acquire) também funciona; acquire repetido é idempotente', async () => {
+  const L = fakeLocks(), bus = fakeBus(), A = tab('A', L, bus), B = tab('B', L, bus); await A.acquire(50); assert.strictEqual(await A.acquire(50), 'held');
+  A.onYield(async () => {}); assert.strictEqual(await B.takeOver(300), 'held'); assert.strictEqual(await B.takeOver(10), 'held');
+});
+
 /* ============================ fixtures v2 (se já geradas) ============================ */
 test('fixtures v2 do repositório: ok carrega sem cópia; crc errado é recusado (e o crc é o FNV-1a de referência)', () => {
   const okp = path.join(__dirname, 'fixtures', 'save_v2_ok.json'); assert.ok(fs.existsSync(okp), 'fixture ausente: rode node tests/make-fixtures.js');
@@ -458,9 +683,11 @@ test('fixtures v2 do repositório: ok carrega sem cópia; crc errado é recusado
   a = mem(); a.m.set('fazenda_las:v2:slot:1', FX('save_v2_crc_errado')); r = mgr(a).load(); assert.strictEqual(r.status, 'invalid'); assert.strictEqual(r.reason, 'crc');
 });
 
-let pass = 0, fail = 0;
-for (const [name, fn] of tests) {
-  try { fn(); pass++; console.log('ok     ' + name); } catch (e) { fail++; console.log('FALHOU ' + name + '\n   ✗ ' + (e && e.message || e).split('\n')[0]); if (process.env.VERBOSE) console.log(e.stack); }
-}
-console.log('\n' + pass + ' testes passaram, ' + fail + ' falharam');
-process.exit(fail ? 1 : 0);
+(async () => {
+  let pass = 0, fail = 0;
+  for (const [name, fn] of tests) {
+    try { await fn(); pass++; console.log('ok     ' + name); } catch (e) { fail++; console.log('FALHOU ' + name + '\n   ✗ ' + (e && e.message || e).split('\n')[0]); if (process.env.VERBOSE) console.log(e.stack); }
+  }
+  console.log('\n' + pass + ' testes passaram, ' + fail + ' falharam');
+  process.exit(fail ? 1 : 0);
+})();
