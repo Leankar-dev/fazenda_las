@@ -1,0 +1,50 @@
+{
+  "image": "casa.png",
+  "size": [
+    604,
+    480
+  ],
+  "display": [
+    403,
+    320
+  ],
+  "door": [
+    219,
+    214
+  ],
+  "lights": [
+    [
+      82,
+      121
+    ],
+    [
+      58,
+      189
+    ],
+    [
+      107,
+      210
+    ],
+    [
+      166,
+      214
+    ],
+    [
+      228,
+      93
+    ],
+    [
+      263,
+      195
+    ],
+    [
+      298,
+      195
+    ],
+    [
+      363,
+      169
+    ]
+  ],
+  "note": "origem das coordenadas = canto superior esquerdo do sprite desenhado em display (403x320). O jogo coloca o sprite com a BASE na base do bloco da casa (7x5 tiles), centrado."
+}

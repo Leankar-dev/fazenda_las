@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
-   art.js  -  arte procedural complementar (plantações, celeiro,
+   art.js  -  arte procedural complementar (plantações, empório,
    árvores, pedras, galinhas...) no mesmo estilo "pintado" dos
    assets recortados da folha do Elias.
    ============================================================ */
@@ -191,81 +191,6 @@ const Art = (() => {
   const crops = {};
   for (const k in CROP_FN) {
     crops[k] = [0, 1, 2, 3, 4].map(s => mk(CW, CH, g => CROP_FN[k](g, s)));
-  }
-
-  /* ---------------- CELEIRO (7x5 tiles = 448 x 320) ---------------- */
-  function drawBarn() {
-    return mk(448, 320, (g, W, H) => {
-      const P = [[14, 150], [14, 108], [78, 44], [224, 10], [370, 44], [434, 108], [434, 150]];
-      // sombra no chão
-      const sg = g.createLinearGradient(0, H - 16, 0, H); sg.addColorStop(0, 'rgba(0,0,0,0)'); sg.addColorStop(1, 'rgba(0,0,0,.35)');
-      g.fillStyle = sg; g.fillRect(0, H - 16, W, 16);
-      // paredes
-      const wall = g.createLinearGradient(0, 40, 0, H);
-      wall.addColorStop(0, '#c04430'); wall.addColorStop(1, '#8a281c');
-      g.fillStyle = wall;
-      g.beginPath(); g.moveTo(14, H - 6); g.lineTo(P[0][0], P[0][1]);
-      for (const p of P) g.lineTo(p[0], p[1]);
-      g.lineTo(434, H - 6); g.closePath(); g.fill();
-      // tábuas
-      g.strokeStyle = 'rgba(60,10,5,.35)'; g.lineWidth = 1.4;
-      for (let x = 22; x < 434; x += 15) { g.beginPath(); g.moveTo(x, 16); g.lineTo(x, H - 8); g.stroke(); }
-      g.strokeStyle = 'rgba(255,170,140,.12)';
-      for (let x = 23; x < 434; x += 15) { g.beginPath(); g.moveTo(x, 16); g.lineTo(x, H - 8); g.stroke(); }
-      // limpar acima do telhado (recorta)
-      g.globalCompositeOperation = 'destination-in';
-      g.beginPath(); g.moveTo(14, H); for (const p of P) g.lineTo(p[0], p[1]); g.lineTo(434, H); g.closePath(); g.fill();
-      g.globalCompositeOperation = 'source-over';
-      // fundação
-      const fd = g.createLinearGradient(0, H - 20, 0, H); fd.addColorStop(0, '#8a8a85'); fd.addColorStop(1, '#5c5c58');
-      g.fillStyle = fd; g.fillRect(10, H - 18, 428, 18);
-      g.strokeStyle = 'rgba(0,0,0,.3)'; g.lineWidth = 1;
-      for (let x = 10; x < 438; x += 26) { g.beginPath(); g.moveTo(x, H - 18); g.lineTo(x, H - 9); g.moveTo(x + 13, H - 9); g.lineTo(x + 13, H); g.stroke(); }
-      // moldura branca do telhado
-      g.lineJoin = 'round'; g.lineCap = 'round';
-      g.strokeStyle = '#4b4137'; g.lineWidth = 17;
-      g.beginPath(); g.moveTo(P[0][0] - 6, P[0][1] + 4); for (const p of P) g.lineTo(p[0], p[1] - 2); g.lineTo(440, 154); g.stroke();
-      g.strokeStyle = '#6a5d4e'; g.lineWidth = 10;
-      g.beginPath(); g.moveTo(P[0][0] - 6, P[0][1] + 2); for (const p of P) g.lineTo(p[0], p[1] - 3); g.lineTo(440, 152); g.stroke();
-      g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 2.5;
-      g.beginPath(); g.moveTo(P[0][0] - 6, P[0][1]); for (const p of P) g.lineTo(p[0], p[1] - 6); g.lineTo(440, 148); g.stroke();
-      g.strokeStyle = '#efe6d2'; g.lineWidth = 5;
-      g.beginPath(); g.moveTo(14, H - 18); g.lineTo(P[0][0], P[0][1]); for (const p of P) g.lineTo(p[0], p[1] + 9); g.lineTo(434, H - 18); g.stroke();
-      // faixa horizontal
-      g.fillStyle = '#efe6d2'; g.fillRect(14, 150, 420, 5);
-      // portão grande
-      const dx = 160, dy = 188, dw = 128, dh = H - 18 - dy;
-      g.fillStyle = '#efe6d2'; g.fillRect(dx - 6, dy - 6, dw + 12, dh + 6);
-      const dg = g.createLinearGradient(0, dy, 0, dy + dh); dg.addColorStop(0, '#9c3022'); dg.addColorStop(1, '#6e1f16');
-      g.fillStyle = dg; g.fillRect(dx, dy, dw / 2 - 1, dh); g.fillRect(dx + dw / 2 + 1, dy, dw / 2 - 1, dh);
-      g.strokeStyle = '#efe6d2'; g.lineWidth = 6;
-      for (const ox of [dx, dx + dw / 2 + 1]) {
-        g.strokeRect(ox + 3, dy + 3, dw / 2 - 7, dh - 6);
-        g.beginPath(); g.moveTo(ox + 3, dy + 3); g.lineTo(ox + dw / 2 - 4, dy + dh - 3); g.moveTo(ox + dw / 2 - 4, dy + 3); g.lineTo(ox + 3, dy + dh - 3); g.stroke();
-      }
-      // janela de feno
-      const hx = 192, hy = 60, hw = 64, hh = 62;
-      g.fillStyle = '#efe6d2'; g.fillRect(hx - 6, hy - 6, hw + 12, hh + 12);
-      g.fillStyle = '#2a1510'; g.fillRect(hx, hy, hw, hh);
-      g.fillStyle = '#e0b84a';
-      g.beginPath(); g.moveTo(hx, hy + hh); g.lineTo(hx, hy + 28); g.quadraticCurveTo(hx + 20, hy + 20, hx + 34, hy + 34); g.quadraticCurveTo(hx + 50, hy + 22, hx + hw, hy + 30); g.lineTo(hx + hw, hy + hh); g.fill();
-      g.strokeStyle = '#a9842a'; g.lineWidth = 1;
-      for (let i = 0; i < 16; i++) { g.beginPath(); g.moveTo(hx + 4 + i * 3.7, hy + hh); g.lineTo(hx + 8 + i * 3.7 - (i % 3) * 3, hy + 36 + (i % 4) * 4); g.stroke(); }
-      g.strokeStyle = '#efe6d2'; g.lineWidth = 4;
-      g.beginPath(); g.moveTo(hx + hw / 2, hy); g.lineTo(hx + hw / 2, hy + hh); g.moveTo(hx, hy + hh / 2 - 10); g.lineTo(hx + hw, hy + hh / 2 - 10); g.stroke();
-      // janelas laterais
-      for (const wx of [56, 336]) {
-        g.fillStyle = '#efe6d2'; g.fillRect(wx - 5, 196, 62, 62);
-        const wg = g.createLinearGradient(0, 200, 0, 254); wg.addColorStop(0, '#9fd4ee'); wg.addColorStop(1, '#4a7fa5');
-        g.fillStyle = wg; g.fillRect(wx, 201, 52, 52);
-        g.strokeStyle = '#efe6d2'; g.lineWidth = 4;
-        g.beginPath(); g.moveTo(wx + 26, 201); g.lineTo(wx + 26, 253); g.moveTo(wx, 227); g.lineTo(wx + 52, 227); g.stroke();
-        g.fillStyle = 'rgba(255,255,255,.3)'; g.beginPath(); g.moveTo(wx + 4, 205); g.lineTo(wx + 22, 205); g.lineTo(wx + 4, 223); g.fill();
-      }
-      // lâmpada
-      g.fillStyle = '#3a3a3a'; g.fillRect(222, 164, 4, 12);
-      ball(g, 224, 180, 5, '#fff3b0', '#e0a52a');
-    });
   }
 
   /* ---------------- BARRACA / EMPÓRIO (3x2 tiles; 192x150) ---------------- */
@@ -653,9 +578,9 @@ const Art = (() => {
   const out = {
     TAU, mk, ball, leaf, shadow, mulberry32, crops, drawCan, drawChicken, drawEgg, icon,
     CW, CH, FRUIT_SP,
-    barn: null, stall: null, sign: null, bin: null, well: null, coop: null, trees: [], rocks: [], stump: null, bushes: [],
+    stall: null, sign: null, bin: null, well: null, coop: null, trees: [], rocks: [], stump: null, bushes: [],
     init() {
-      this.barn = drawBarn(); this.stall = drawStall(); this.sign = drawSign(); this.bin = drawBin(); this.well = drawWell(); this.coop = drawCoop();
+      this.stall = drawStall(); this.sign = drawSign(); this.bin = drawBin(); this.well = drawWell(); this.coop = drawCoop();
       this.trees = [0, 1, 2].map(drawTree); this.rocks = [0, 1].map(drawRock); this.stump = drawStump();
       this.bushes = [0, 1, 2].map(drawBush);
       // ícone do regador

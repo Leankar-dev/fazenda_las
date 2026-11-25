@@ -29,7 +29,7 @@ Para adicionar outro personagem: crie `assets/<pasta>/` com os mesmos 16 sprites
 - Leite, carne, trufas, frutas e ovos vão para o cesto/inventário e são vendidos na caixa de vendas.
 
 ## Como jogar
-Arar → plantar → regar → (depois das 18:00) dormir na porta do celeiro → colher → vender na caixa → comprar mais sementes/melhorias.
+Arar → plantar → regar → (depois das 18:00) dormir na porta da casa → colher → vender na caixa → comprar mais sementes/melhorias.
 Pedras e tocos saem com a picareta; mato com o forcado; ovos das galinhas valem dinheiro.
 Dias de chuva regam tudo sozinhos. O progresso é salvo automaticamente (localStorage).
 
@@ -72,10 +72,11 @@ Os jogos ficam **só neste navegador** (`localStorage`): limpar os dados do site
 - `assets/fazendeiro/` – sprites do Elias (recortados de `docs/imagem_fazendeiro.jpeg`)
 - `assets/fazendeira/` – sprites da Karen (recortados de `docs/imagem_fazendeira.jpeg`, inclui os chapéus)
 - `assets/tile_*.png` – tiles de terreno compartilhados pelos dois personagens
+- `assets/casa.png` (+ `casa.json`) – a **casa principal** (tijolos, pórtico com porta vermelha; as janelas acendem à noite), gerada de `docs/casa_fazenda.jpeg` por `python tools/make-house-sprite.py` (remove o "xadrez" do fundo do JPEG; numpy, scipy, opencv)
 - `assets/animais/` – cachorro, vaca e porco (vistas estáticas), `props/` (37 acessórios) e `tiles/` (15), recortados de `docs/animais.jpeg`
 - `assets/animais/cavalo/` – **sprite sheet animada** `walk_sheet.png` (920×640, fundo transparente: **5 quadros do ciclo × 4 direções**, células de 184×160 com os pés no centro-base), `walk_sheet.json` (metadados) e `icon.png` (busto 96×96 da loja). Gerados de `docs/cavalo_sprite_sheet.jpeg` por `python tools/make-horse-sprites.py` (numpy, scipy, opencv, Pillow); o jogo recorta a sheet em 20 quadros ao carregar
 - `animais.js` – curral, comportamento dos animais e montaria
-- `art.js` – arte procedural complementar (plantações, celeiro, árvores, galinhas...)
+- `art.js` – arte procedural complementar (plantações, empório, árvores, galinhas...)
 - `save.js` – persistência (`SaveManager`): salvar/carregar, cópias de segurança, exportar/importar, proteção contra duas abas (aviso por `rev` + bloqueio de jogo por Web Locks), sonda do storage, `persist()` e configuração de áudio
 - `game.js` – lógica, renderização, UI e áudio (WebAudio)
 - `manifest.webmanifest`, `pwa/` – app instalável (nome, cores, ícones) · `tools/` – build do site e do service worker · `.github/workflows/pages.yml` – deploy

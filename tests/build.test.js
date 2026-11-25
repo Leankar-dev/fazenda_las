@@ -86,6 +86,19 @@ test('cavalo: os 7 PNGs antigos foram removidos e a loja usa o ícone novo', () 
   assert.deepStrictEqual(left, ['icon.png', 'walk_sheet.json', 'walk_sheet.png'], 'sobrou arquivo antigo: ' + left);
   const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'); assert.ok(game.includes("cavalo/icon.png") && !/cavalo\/(front|back|profile|bottomup)/.test(game + fs.readFileSync(path.join(ROOT, 'animais.js'), 'utf8')), 'ninguém cita os sprites antigos');
 });
+test('casa: casa.png × casa.json × constantes HOUSE_ART do game.js batem; o celeiro procedural foi removido do art.js', () => {
+  const meta = JSON.parse(fs.readFileSync(path.join(ROOT, 'assets', 'casa.json'), 'utf8')), png = pngInfo(path.join(ROOT, 'assets', 'casa.png'));
+  assert.deepStrictEqual([png.w, png.h], meta.size); assert.strictEqual(png.colorType, 6, 'RGBA (fundo transparente)');
+  const game = fs.readFileSync(path.join(ROOT, 'game.js'), 'utf8'), blk = /const HOUSE_ART = (\{[^;]*\});/.exec(game); assert.ok(blk, 'HOUSE_ART no game.js');
+  const H = new Function('return ' + blk[1])(); assert.deepStrictEqual([H.w, H.h], meta.display); assert.deepStrictEqual(H.door, meta.door); assert.deepStrictEqual(H.lights, meta.lights);
+  assert.ok(meta.display[0] <= 7 * 64 && meta.display[1] <= 5 * 64, 'cabe no bloco da casa (7x5 tiles)'); assert.ok(meta.lights.length >= 6);
+  for (const [x, y] of [meta.door, ...meta.lights]) assert.ok(x > 0 && y > 0 && x < meta.display[0] && y < meta.display[1], 'ponto dentro do sprite: ' + x + ',' + y);
+  assert.ok(/HOUSE\s*=\s*\{ x: 5,\s+y: 0, w: 7, h: 5 \}/.test(game), 'o bloco sólido da casa continua 7x5 em (5,0): a porta (linha 4, colunas 7-9) depende disto');
+  const art = fs.readFileSync(path.join(ROOT, 'art.js'), 'utf8'); assert.ok(!/drawBarn|this\.barn|barn:/.test(art) && !/Art\.barn|BARN/.test(game), 'sobrou código do celeiro antigo');
+  assert.ok(/HOUSE_X = HOUSE\.x \* TS \+ Math\.round/.test(game), 'a posição do sprite é arredondada (px inteiros)');
+  assert.ok(game.includes("'casa'") && /IMGS\.casa/.test(game), 'o jogo carrega e desenha a casa');
+  const porch = Math.round(H.door[0] + Math.round((7 * 64 - H.w) / 2) + 5 * 64); assert.ok(porch >= 7 * 64 && porch <= 10 * 64, 'a porta desenhada fica sobre a linha de interação (colunas 7-9): x=' + porch);
+});
 test('assets: toda imagem citada por literal no código existe com a CAIXA exata (o Pages é case-sensitive, o Windows não)', () => {
   const real = new Set(listAll(path.join(ROOT, 'assets')).map(f => 'assets/' + f)); let n = 0;
   for (const f of ['game.js', 'animais.js', 'art.js', 'style.css', 'index.html']) {

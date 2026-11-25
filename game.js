@@ -32,7 +32,7 @@
   let CHAR = CHARACTERS.fazendeiro;
   const charSrc = n => CHAR.folder + '/' + n + '.png';
   const SPRITE_LIST = ['back', 'back34r', 'basket', 'belt', 'bottomup', 'front_stand', 'front_walk', 'glove1', 'glove2', 'left34', 'left_stand', 'pickaxe', 'pitchfork', 'seedbag_empty', 'seedbag_stack', 'topdown'];
-  const TILE_LIST = ['tile_bare', 'tile_muddy', 'tile_loose', 'tile_grassA', 'tile_grassB', 'tile_grassC', 'tile_grassD', 'tile_wood'];
+  const TILE_LIST = ['casa', 'tile_bare', 'tile_muddy', 'tile_loose', 'tile_grassA', 'tile_grassB', 'tile_grassC', 'tile_grassD', 'tile_wood'];
   const CHAR_IMGS = {};
 
   /* ---------------- dados ---------------- */
@@ -87,7 +87,11 @@
   ];
 
   /* ---------------- layout do mapa ---------------- */
-  const BARN  = { x: 5,  y: 0, w: 7, h: 5 };
+  const HOUSE = { x: 5,  y: 0, w: 7, h: 5 };       // a casa principal (bloco sólido de 7x5 tiles; a porta é a linha de baixo, colunas 7-9)
+  /* arte da casa (assets/casa.png, gerada por tools/make-house-sprite.py; tests/build.test.js confere estas constantes com assets/casa.json): desenhada em 403x320 px,
+     centrada no bloco com a base na base dele. `door` e `lights` em px de tela relativos ao canto do sprite (luzes = janelas, acendem à noite). */
+  const HOUSE_ART = { w: 403, h: 320, door: [219, 214], lights: [[82, 121], [58, 189], [107, 210], [166, 214], [228, 93], [263, 195], [298, 195], [363, 169]] };
+  const HOUSE_X = HOUSE.x * TS + Math.round((HOUSE.w * TS - HOUSE_ART.w) / 2), HOUSE_Y = (HOUSE.y + HOUSE.h) * TS - HOUSE_ART.h;      // posição do sprite, em px INTEIROS (meio pixel borraria a arte)
   const STALL = { x: 14, y: 3, w: 3, h: 2 };
   const SIGN  = { x: 14, y: 6, w: 3, h: 1 };     // placa "FAZENDA LAS" na frente do empório (logo abaixo da trilha)
   const BIN   = { x: 18, y: 4, w: 2, h: 1 };
@@ -152,7 +156,7 @@
     const felled = new Set((S.felled || []).map(f => f[0] + ',' + f[1]));
     const r = Art.mulberry32(1234);
     const mark = (rect) => { for (let y = rect.y; y < rect.y + rect.h; y++) for (let x = rect.x; x < rect.x + rect.w; x++) solid[idx(x, y)] = 1; };
-    [BARN, STALL, SIGN, BIN, WELL, COOP].forEach(mark);
+    [HOUSE, STALL, SIGN, BIN, WELL, COOP].forEach(mark);
     Animals.markSolid(solid, MW);
     for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
       const i = idx(x, y);
@@ -1359,7 +1363,7 @@
       ${durabilityText() ? `<div class="help" id="durLine">${durabilityText()}</div>` : ''}
       <h3>Como jogar</h3>
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
-      ④ depois das 18:00, durma na porta do celeiro para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
+      ④ depois das 18:00, durma na porta da casa para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
       Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. As galinhas botam ovos 2× por dia (manhã e meio-dia) e os porcos dão carne 2× por dia. Dias com chuva regam tudo sozinhos!</div>
       <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="switchslot">Trocar de jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb alt" data-a="export" title="Baixa o jogo como um arquivo .json (backup ou para levar a outro aparelho)">Exportar</button><button class="mb" data-a="close">Continuar</button></div>`);
   }
@@ -1537,7 +1541,7 @@
     if (st.till < 3) return 'Mova-se com <b>WASD</b>. Pressione <b>1</b> (Forcado) e <b>ESPAÇO</b> para arar a terra à sua frente (' + st.till + '/3).';
     if (st.plant < 3) return 'Agora pressione <b>3</b> (Sementes) e <b>ESPAÇO</b> sobre a terra arada para plantar (' + st.plant + '/3).';
     if (st.water < 3) return 'Pegue o Regador (<b>2</b>) e regue as plantas. Encha o regador no <b>poço</b> com <b>E</b> (' + st.water + '/3).';
-    if (st.sleep < 1) return 'Depois das <b>18:00</b>, vá até a porta do celeiro (tábuas, no topo) e pressione <b>E</b> para <b>dormir</b> — as plantas regadas crescem de noite.';
+    if (st.sleep < 1) return 'Depois das <b>18:00</b>, vá até a porta da casa (a porta vermelha do pórtico, no topo) e pressione <b>E</b> para <b>dormir</b> — as plantas regadas crescem de noite.';
     if (st.harvest < 1) return 'Quando a planta estiver madura, use as <b>Luvas</b> (<b>4</b>) ou <b>E</b> para colher.';
     if (st.sold < 1) return 'Venda a colheita na <b>Caixa de Vendas</b> com <b>E</b>. Depois compre mais sementes na loja!';
     return '';
@@ -1990,7 +1994,7 @@
 
   function drawBuildings(list, x0, y0, x1, y1) {
     const vis = (r) => r.x <= x1 + 1 && r.x + r.w >= x0 - 1 && r.y <= y1 + 1 && r.y + r.h >= y0 - 1;
-    if (vis(BARN)) list.push({ y: (BARN.y + BARN.h) * TS - 10, d: () => g.drawImage(Art.barn, BARN.x * TS, (BARN.y + BARN.h) * TS - 320) });
+    if (vis(HOUSE)) list.push({ y: (HOUSE.y + HOUSE.h) * TS - 10, d: () => g.drawImage(IMGS.casa, HOUSE_X, HOUSE_Y, HOUSE_ART.w, HOUSE_ART.h) });
     if (vis(STALL)) list.push({ y: (STALL.y + STALL.h) * TS - 8, d: () => g.drawImage(Art.stall, STALL.x * TS, (STALL.y + STALL.h) * TS - 150 + 6) });
     if (vis(SIGN)) list.push({ y: (SIGN.y + 1) * TS - 6, d: () => g.drawImage(Art.sign, SIGN.x * TS, (SIGN.y + 1) * TS - 104 + 8) });
     if (vis(BIN)) list.push({ y: (BIN.y + 1) * TS - 6, d: () => g.drawImage(Art.bin, BIN.x * TS, (BIN.y + 1) * TS - 92 + 10) });
@@ -2135,7 +2139,8 @@
       g.setTransform(dpr * zoom, 0, 0, dpr * zoom, 0, 0); g.translate(-Math.round(cam.x), -Math.round(cam.y));
       g.globalCompositeOperation = 'lighter';
       const lamp = (x, y, r, a) => { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, `rgba(255,210,120,${a * nn * (1 + .07 * Math.sin(time * 13) + .05 * Math.sin(time * 29.7))})`); gr.addColorStop(1, 'rgba(255,170,60,0)'); g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2); };
-      lamp(BARN.x * TS + 224, 180, 150, .6); lamp(BARN.x * TS + 80, 228, 70, .45); lamp(BARN.x * TS + 364, 228, 70, .45); lamp(STALL.x * TS + 96, 4.4 * TS, 110, .4);
+      for (const [lx, ly] of HOUSE_ART.lights) lamp(HOUSE_X + lx, HOUSE_Y + ly, 46, .5);      // as janelas da casa acendem; a porta ganha um brilho maior
+      lamp(HOUSE_X + HOUSE_ART.door[0], HOUSE_Y + HOUSE_ART.door[1] + 6, 80, .38); lamp(STALL.x * TS + 96, 4.4 * TS, 110, .4);
       lamp(P.x, P.y - 40, 130, .28);
       for (const f of flies) {
         const gl = nn * Math.max(0, .5 + .5 * Math.sin(f.t * 2.2 + f.ph)); if (gl < .05) continue;

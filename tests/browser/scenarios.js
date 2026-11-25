@@ -288,6 +288,32 @@
     },
   };
 
+  /* Casa principal (assets/casa.png no lugar do celeiro procedural): é desenhada no lugar certo e no tamanho certo; continua sólida; a porta (linha 4, colunas 7-9) dorme só depois
+     das 18:00; à noite as janelas acendem (8 luzes) e de dia não */
+  S_['casa-principal'] = {
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); $('btnNew').click(); await wait(200); document.querySelectorAll('.charCard')[0].click(); const G = await gameReady();
+      ok('o celeiro procedural não existe mais (Art.barn)', typeof Art.barn === 'undefined');
+      const proto = CanvasRenderingContext2D.prototype, draw0 = proto.drawImage, grad0 = proto.createRadialGradient, calls = [], grads = [];
+      proto.drawImage = function (img, ...a) { if (img && img.width === 604 && img.height === 480) calls.push(a); return draw0.call(this, img, ...a); };
+      proto.createRadialGradient = function (x0, y0, r0, x1, y1, r1) { grads.push([x1, y1, r1]); return grad0.call(this, x0, y0, r0, x1, y1, r1); };
+      G.S.min = 12 * 60; G.P.x = 8.5 * 64; G.P.y = 6.2 * 64; steps(G, 6);
+      ok('a casa é desenhada (casa.png 604x480) no tamanho 403x320, centrada no bloco 7x5 (x=343, px INTEIRO) com a base em y=320', calls.length > 0 && calls.every(c => c.length === 4 && c[0] === 343 && c[1] === 0 && c[2] === 403 && c[3] === 320), JSON.stringify(calls.slice(0, 2)));
+      ok('de dia não há luzes de janela', !grads.some(g => g[2] === 46), grads.length);
+      grads.length = 0; G.S.min = 21 * 60 + 30; steps(G, 10);
+      const win = grads.filter(g => g[2] === 46); ok('à noite as 8 janelas acendem (e a porta tem o seu brilho)', win.length >= 8 && grads.some(g => g[2] === 80), win.length + ' / ' + grads.length);
+      ok('as luzes estão sobre a casa (x 343..746, y 0..320)', win.every(g => g[0] > 343 && g[0] < 746 && g[1] > 0 && g[1] < 320), JSON.stringify(win.slice(0, 3)));
+      proto.drawImage = draw0; proto.createRadialGradient = grad0;
+      ok('o bloco da casa é sólido (cantos e porta) e o caminho em frente é livre', [[5, 0], [11, 0], [5, 4], [11, 4], [8, 4], [8, 2]].every(([x, y]) => G.blocked(x, y)) && !G.blocked(8, 5), '');
+      G.S.min = 12 * 60; G.P.x = 8.5 * 64; G.P.y = 5.6 * 64; G.P.dir = 1; steps(G, 4);
+      const t = G.facingTile(); ok('de frente para a casa o alvo é a porta (tile 8,4)', t && t[0] === 8 && t[1] === 4, JSON.stringify(t));
+      clearToasts(); G.interact(8, 4); ok('antes das 18:00 não dorme: só o aviso, sem confirmação', toasts().some(x => /18:00/.test(x)) && $('modal').classList.contains('hidden'), toasts().join('|'));
+      G.S.min = 19 * 60; G.interact(8, 4); await wait(100); ok('depois das 18:00 a porta abre a confirmação de dormir', !$('modal').classList.contains('hidden') && /Dormir/.test($('modal').innerText), $('modal').innerText.slice(0, 60));
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
   /* Cavalo animado (sprite sheet walk_sheet.png: 5 quadros x 4 direções): a sheet carrega e é fatiada em 20 quadros com pés na base; o ciclo avança andando e volta ao
      repouso parado; montado e solto, nas 4 direções, desenha sem erro; o ícone da loja (busto) carrega */
   S_['cavalo-sprites'] = {
