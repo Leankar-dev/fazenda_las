@@ -10,6 +10,8 @@ node tests/run.js --list               #    lista os cenários
 node tests/run.js --chrome="C:/caminho/chrome.exe" --jobs=2 --virtual=60000   # --virtual: orçamento de tempo virtual por cenário (ms)
 node tests/make-fixtures.js            #    (re)gera as fixtures v2 a partir do jogo real
 node tests/real-tabs.js                # 3) DUAS ABAS REAIS (opt-in, ~1 min): Chrome em tempo real via CDP — Web Locks e BroadcastChannel de verdade
+node tests/build.test.js               #    build do site + lógica do service worker (Node puro, segundos) — roda também no deploy
+node tests/pwa.js                      # 4) PWA NO NAVEGADOR REAL (opt-in, ~1 min): instala o SW, abre OFFLINE (servidor derrubado), novo deploy sem perder o save
 ```
 
 Código de saída `0` = tudo passou · `1` = algum teste falhou · `2` = erro de uso (só o `run.js`). Se o navegador não for achado, defina `CHROME_PATH`.
@@ -47,6 +49,11 @@ Envelope e `crc` (vetores-padrão do FNV-1a + referência independente), `inspec
 ### 3) Duas abas reais (`tests/real-tabs.js`, opt-in)
 
 A suíte principal roda em **tempo virtual**, onde o `navigator.locks` **real** nunca responde (medido: nem em `file://`, nem em `http://`, nem no Edge) — por isso **toda página de teste recebe o Web Locks e o `BroadcastChannel` falsos** de `tests/fakes.js` (instalados pelo `lib.js`) e os cenários `lock-*` simulam a "outra aba" no mesmo mundo falso. Para não confiar só no falso, `node tests/real-tabs.js` abre o Chrome em **tempo real** (CDP, sem dependências, Node 22+) com o jogo servido em `http://127.0.0.1` e **3 abas de verdade**: (1) A joga → B abre e fica bloqueada → "Assumir aqui" → A **salva antes de soltar** e para, B entra, continua o jogo da A e grava, A é recusada (`LockLost`); (2) B joga e é **congelada pelo depurador** (não responde ao canal) → C pede, espera o prazo (~3 s) e **rouba** → B, ao acordar, vê "assumiu o jogo" e **não grava**. 19 verificações. Esse teste já pegou um defeito que a suíte simulada não via: a dona congelada acordava, processava o pedido **vencido** e salvava por cima do jogo de quem tinha roubado (corrigido: o pedido leva `at`/`ttl`).
+
+### 4) Build, service worker e PWA (Fase 3)
+
+- **`tests/build.test.js`** (14 testes, Node puro): o build publica **só o necessário** (nada de `docs/`/`tests/`/`tools/`/`.jpeg`) e **todos** os assets com a caixa exata; é **determinístico** (mesmo conteúdo = mesma versão); `?v=` em todo css/js; manifesto e ícones com o tamanho declarado; a lista do service worker == o que foi publicado; o build **falha** se o `index.html` deixar de citar um arquivo. O `service-worker.js` **gerado** roda numa sandbox com `caches`/`fetch` falsos: instalação tudo-ou-nada, `activate` só apaga `fazenda-las-*` (nunca o cache de outro projeto), **offline** serve página e arquivos do cache, `?r=` de imagem acha o cache mas **script de outra versão `?v=` nunca**, página nova da rede não contamina o cache antigo, atualização v1 → v2, rede travada cai no cache em ~4 s. **10 mutações detectadas.**
+- **`tests/pwa.js`** (opt-in, 18 verificações, Chrome real em tempo real): 1ª visita instala o SW e guarda o site; o manifesto é lido e o Chrome **não aponta erro de instalabilidade**; joga e salva → **derruba o servidor** → a página, os scripts e as imagens abrem do cache e o **Continuar traz o save**; **novo deploy** (v2): o HTML novo chega apesar do `max-age=600`, o código novo roda, o cache da v1 some, o de outro projeto e o `localStorage` ficam intactos, o **save é o mesmo**; offline na v2. O servidor de teste manda `no-store` nos arquivos (menos o HTML): na 1ª versão do teste o cache HTTP do Chrome escondia o service worker e uma mutação passou — por isso.
 
 ## Fixtures (`tests/fixtures/*.json`)
 

@@ -1,7 +1,7 @@
 # FAZENDA LAS
 
 Jogo de fazenda em HTML5 Canvas + JavaScript puro (sem build, sem dependências).
-Abra `index.html` no navegador (Chrome/Edge/Firefox) e jogue.
+Abra `index.html` no navegador (Chrome/Edge/Firefox) e jogue — ou use a versão publicada: **https://leankar-dev.github.io/fazenda_las/** (veja "Jogar online e offline").
 
 ## Personagens
 Em **Novo jogo** você escolhe entre **Elias** (o fazendeiro) e **Karen** (a fazendeira). Os dois têm as mesmas habilidades; a escolha é salva no jogo e pode ser trocada a qualquer momento em **Esc → Trocar personagem**.
@@ -55,6 +55,19 @@ Os jogos ficam **só neste navegador** (`localStorage`): limpar os dados do site
 - O jogo pede ao navegador para **não apagar os dados do site** (`navigator.storage.persist()`) depois do seu primeiro clique ou tecla. O **Esc** mostra se isso foi concedido; se não, o aviso lembra de exportar de vez em quando (no iPhone/iPad o Safari pode apagar dados de sites não abertos por cerca de 7 dias).
 - **Só uma aba joga por vez.** Se o FAZENDA LAS já está aberto em outra aba ou janela, a nova aba mostra "já está aberto em outra aba" e **não inicia** (nem grava). **Assumir aqui** faz a outra aba **salvar o jogo e parar** (se ela não responder em ~3 s, esta toma o jogo). Se a outra aba for fechada, esta entra sozinha. A aba que perdeu o jogo oferece **Baixar meu jogo** e **Recarregar**. Navegadores sem essa função continuam protegidos pelo aviso de "jogo aberto em outra aba".
 
+## Jogar online e offline (GitHub Pages / PWA)
+- O jogo publicado funciona **sem internet** depois da **primeira visita**: o navegador guarda o site inteiro (≈ 3 MB) e abre direto do aparelho. No celular, use **Instalar app / Adicionar à tela inicial** (Chrome Android: menu ⋮ → *Instalar app*; Safari iPhone: Compartilhar → *Adicionar à Tela de Início*) — instalado, o jogo abre em tela cheia, com ícone próprio. Instalar também ajuda a proteger os dados: o Safari costuma apagar os dados de sites que ficam ~7 dias sem uso, e um app instalado tem tratamento melhor.
+- **Atualizações:** quando há uma versão nova, ela chega sozinha na **próxima vez que você abrir** (com internet); o jogo aberto nunca recarrega sozinho. **Seu jogo salvo não é afetado** — ele fica no armazenamento do navegador, que a atualização não toca.
+- **Onde ficam meus saves?** No `localStorage` do navegador, **só neste aparelho e neste navegador**, na origem `leankar-dev.github.io` (chaves `fazenda_las:v2:*`). O site publicado e o arquivo local (`file://`) são **origens diferentes**: um jogo salvo abrindo o `index.html` do disco **não aparece** no site (e vice-versa) — use **Exportar → Importar** para levar o jogo de um para o outro. Limpar os dados do site apaga os jogos: **exporte um backup de vez em quando**.
+- **Privacidade:** o FAZENDA LAS não tem servidor, conta, anúncio nem rastreador. **Nada do seu jogo sai do seu aparelho**: o único tráfego de rede é baixar os arquivos do jogo (o GitHub Pages registra acessos como qualquer site). O jogo só grava no armazenamento local do navegador e em arquivos que **você** baixa (Exportar).
+
+## Publicar (para quem mantém o projeto)
+- O deploy é automático: cada **push na `main`** roda `.github/workflows/pages.yml` (testes rápidos → `node tools/build-site.js` → GitHub Pages). **Uma vez**, em *Settings → Pages → Build and deployment → Source*, escolha **GitHub Actions**.
+- `node tools/build-site.js [--out=_site]` monta o site: publica só `index.html`, `style.css`, os `.js`, `manifest.webmanifest`, `pwa/` e `assets/` (nada de `docs/`, `tests/`, `tools/`, `.jpeg`), acrescenta `?v=<hash>` nos scripts/estilo (quebra o cache da CDN), liga o manifesto e gera o `service-worker.js` com o mesmo hash. **Igual conteúdo = igual versão.** O `index.html` do repositório continua abrindo por `file://`, sem service worker.
+- Estratégia do service worker (`tools/service-worker.template.js`): **página = rede primeiro** (4 s de limite, depois o cache); **scripts/estilo = só a versão exata (`?v=`)**; **imagens = cache primeiro**. A instalação é tudo-ou-nada, e só os caches `fazenda-las-*` são apagados (o `github.io` é compartilhado com outros projetos).
+- **Novo asset?** Ele entra sozinho no cache (o build lista `assets/` inteiro). Confira a **caixa do nome do arquivo** (o Pages é case-sensitive; o Windows não) — `tests/build.test.js` confere que os assets publicados são exatamente os do repositório.
+- Ícones do PWA: `python tools/make-icons.py` (Pillow) regenera `pwa/icon-*.png` a partir dos sprites.
+
 ## Arquivos
 - `assets/fazendeiro/` – sprites do Elias (recortados de `docs/imagem_fazendeiro.jpeg`)
 - `assets/fazendeira/` – sprites da Karen (recortados de `docs/imagem_fazendeira.jpeg`, inclui os chapéus)
@@ -64,6 +77,7 @@ Os jogos ficam **só neste navegador** (`localStorage`): limpar os dados do site
 - `art.js` – arte procedural complementar (plantações, celeiro, árvores, galinhas...)
 - `save.js` – persistência (`SaveManager`): salvar/carregar, cópias de segurança, exportar/importar, proteção contra duas abas (aviso por `rev` + bloqueio de jogo por Web Locks), sonda do storage, `persist()` e configuração de áudio
 - `game.js` – lógica, renderização, UI e áudio (WebAudio)
+- `manifest.webmanifest`, `pwa/` – app instalável (nome, cores, ícones) · `tools/` – build do site e do service worker · `.github/workflows/pages.yml` – deploy
 
 ## Música e animações
 Música de fundo gerada em tempo real (WebAudio): tema alegre de dia, caixinha de música com grilos à noite e tema calmo com som de chuva nos dias chuvosos.
