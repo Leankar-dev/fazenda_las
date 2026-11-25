@@ -6,7 +6,10 @@
    + arte procedural em art.js
    ============================================================ */
 (() => {
-  const TS = 64, MW = 46, MH = 34;
+  const TS = 64;
+  /* MAPA. Dobrado em ÁREA na Fase 3 do plano das ovelhas (docs/melhorias/ovelhas_coelhos): 46 x 34 -> 64 x 49 tiles, crescendo para LESTE e SUL (a origem não mexe: posições em px, plantas,
+     árvores cortadas e o jogador continuam valendo). Só o vetor `S.soil` é indexado por `y*MW+x`: o save.js (migração 2→3) o remonta; tests/build.test.js confere que as constantes batem. */
+  const LEGACY_MW = 46, LEGACY_MH = 34, MW = 64, MH = 49;
   const DAY_START = 6 * 60, DAY_END = 24 * 60;
   const MIN_PER_SEC = 4;                    // 1 dia = 270 s
   const $ = id => document.getElementById(id);
@@ -112,7 +115,7 @@
   const BOOTS = [1, 1.18, 1.36], BOOTS_COST = [0, 220, 520];
   const EGG_PRICE = 28, STONE_PRICE = 9, WOOD_PRICE = 10, MILK_PRICE = 42, TRUFFLE_PRICE = 80, MEAT_PRICE = 30;
   const SLEEP_FROM = 18 * 60;                           // só dá para dormir a partir das 18:00
-  const MAX_BUSH = 70;                                  // limite de mato no mapa (nasce mato novo toda noite)
+  const MAX_BUSH = 140;                                 // limite de mato no mapa (nasce mato novo toda noite)
   const N_CHICKENS = 6;                                  // galinhas no galinheiro (botam ovos 2× por dia)
   const ANIMAL_SHOP = {
     vaca:   { name: 'Vaca',   cost: 260, max: 4, img: 'assets/animais/vaca/front34.png',   info: 'Dá leite todo dia (vende 42 ◎). Ordenhe com E.' },
@@ -146,6 +149,18 @@
   const inRect = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
   const onDock = (x, y) => inRect(DOCK, x, y);
   const dockZone = { x: DOCK.x - 6, y: DOCK.y - 2, w: DOCK.w + 6, h: DOCK.h + 4 };      // entrada da doca: sem árvores, pedras ou mato
+  /* ÁREAS RESERVADAS do mundo novo: a Fase 4 constrói aqui o curral ampliado, o pasto das ovelhas, a coelheira e a horta 2. Sem árvores, pedras nem mato (só vale para o terreno NOVO;
+     o legado fica como era até a Fase 4 limpar). x/y/w/h em tiles. */
+  const RESERVED = [
+    { x: 29, y: 15, w: 17, h: 18 },      // curral grande ampliado (30–44 × 16–31) + folga
+    { x: 45, y: 15, w: 18, h: 17 },      // pasto das ovelhas (47–62 × 16–30) + corredor até o curral
+    { x: 45, y: 32, w: 15, h: 12 },      // coelheira (47–58 × 33–42)
+    { x: 5,  y: 35, w: 14, h: 10 },      // horta 2 (6–17 × 36–43)
+  ];
+  const inReserved = (x, y) => RESERVED.some(r => inRect(r, x, y));
+  const isLegacyCell = (x, y) => x < LEGACY_MW && y < LEGACY_MH;
+  // aleatório por POSIÇÃO (não depende da ordem em que as células são visitadas): usado onde o mapa antigo precisa continuar igual ao crescer
+  const hash2 = (x, y, seed) => { let h = Math.imul(x + 1, 374761393) ^ Math.imul(y + 1, 668265263) ^ Math.imul(seed, 2147483647); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
   const isWater = (x, y) => {
     const dx = (x + .5 - POND.cx) / POND.rx, dy = (y + .5 - POND.cy) / POND.ry;
     return dx * dx + dy * dy < 1 && !onDock(x, y);
@@ -159,6 +174,7 @@
   const groundVar = new Uint8Array(MW * MH);
   const trees = [];
   const treeGrid = new Array(MW * MH).fill(null);
+  const legacyTree = new Uint8Array(MW * MH);      // 1 = aqui o mapa ANTIGO tinha árvore (mesmo as que o mapa novo afinou): o gerador de obstáculos do mapa antigo precisa pular as mesmas células, para sortear igual
   let obs = [];
   const obsGrid = new Array(MW * MH).fill(null);
   let groundCanvas = null, tilledTile = null, wetTile = null;
@@ -192,31 +208,34 @@
       ...Pesca.defaults(),                      // fish · gear · bait (pesca.js)
       char: 'fazendeiro', selSeed: 'cenoura', tool: 0, dir: 0, px: SPAWN.x, py: SPAWN.y,
       rain: false, soil: new Array(MW * MH).fill(0), crops: {}, obs: [], eggList: [], names: {},
-      obsInit: false, felled: [], goal: 0, stat: { till: 0, plant: 0, water: 0, harvest: 0, sold: 0, sleep: 0, fish: 0 }, won: false,
+      obsInit: false, world: 3, felled: [], goal: 0, stat: { till: 0, plant: 0, water: 0, harvest: 0, sold: 0, sleep: 0, fish: 0 }, won: false,
     };
   }
 
   /* ---------------- mundo ---------------- */
   function buildStatic() {
-    solid.fill(0); trees.length = 0; treeGrid.fill(null);
+    solid.fill(0); trees.length = 0; treeGrid.fill(null); legacyTree.fill(0);
     const felled = new Set((S.felled || []).map(f => f[0] + ',' + f[1]));
     const r = Art.mulberry32(1234);
     const mark = (rect) => { for (let y = rect.y; y < rect.y + rect.h; y++) for (let x = rect.x; x < rect.x + rect.w; x++) solid[idx(x, y)] = 1; };
     [HOUSE, STALL, SIGN, BIN, WELL, COOP].forEach(mark);
     Animals.markSolid(solid, MW);
-    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+    const plant = (x, y, tv) => { const i = idx(x, y); if (felled.has(x + ',' + y)) return; solid[i] = 1; const tr = { x, y, v: tv, border: x === 0 || y === 0 || x === MW - 1 || y === MH - 1, hp: 5 }; trees.push(tr); treeGrid[i] = tr; };
+    // CAMADA 1 — o mapa ANTIGO (46 × 34), exatamente como era: mesma ordem, mesmos sorteios (cada célula consome o gerador igual, mesmo as que depois são descartadas), para que as árvores e o
+    // mato do mapa antigo (e as `felled` de um save) continuem valendo. tests: cenário `mapa-golden` × tests/fixtures/mapa_golden_46x34.json.
+    for (let y = 0; y < LEGACY_MH; y++) for (let x = 0; x < LEGACY_MW; x++) {
       const i = idx(x, y);
       if (isWater(x, y)) { solid[i] = 1; continue; }
       if (solid[i]) continue;
-      const border = x === 0 || x === MW - 1 || y === MH - 1 || y === 0;
+      const border = x === 0 || x === LEGACY_MW - 1 || y === LEGACY_MH - 1 || y === 0;
       const nearPond = Math.hypot(x - POND.cx, (y - POND.cy) * 1.3) < POND.rx + 1.5;
       let forest = false;
       if (!border) {
         if (y === 1 && x > 12) forest = r() < .55;
         else if (y === 2 && x > 24) forest = r() < .5;
         else if (x <= 2 && y > 1) forest = r() < .45;
-        else if (x >= MW - 3 && y > 1) forest = r() < .5;
-        else if (y >= MH - 3) forest = r() < .5;
+        else if (x >= LEGACY_MW - 3 && y > 1) forest = r() < .5;
+        else if (y >= LEGACY_MH - 3) forest = r() < .5;
         else if (x >= 30 && y >= 15 && !nearPond) forest = r() < .22;
         else if (x >= 30 && y <= 3 && !nearPond) forest = r() < .4;
         if (nearPond && r() < .06 && !isPath(x, y) && !isWater(x, y) && Math.hypot(x - POND.cx, (y - POND.cy) * 1.3) > POND.rx + .6) forest = true;
@@ -225,33 +244,67 @@
       if (!border && inRect(dockZone, x, y)) forest = false;
       if (border || forest) {
         const tv = Math.floor(r() * 3);                       // (sempre sorteia, para o mapa não mudar)
-        if (felled.has(x + ',' + y)) continue;                // árvore já cortada pelo jogador (inclui as da borda)
-        solid[i] = 1; const tr = { x, y, v: tv, border, hp: 5 }; trees.push(tr); treeGrid[i] = tr;
+        // A antiga moldura leste/sul (x = 45, y = 33) e a faixa de mata de 3 tiles ao longo dela ficam no MEIO do mapa novo: a moldura vira passagem (sobra 30%) e a faixa afina (sobra 60%).
+        if (!felled.has(x + ',' + y)) legacyTree[i] = 1;
+        const oldEdge = (x === LEGACY_MW - 1 || y === LEGACY_MH - 1) && x !== 0 && y !== 0, oldBand = (x >= LEGACY_MW - 3 || y >= LEGACY_MH - 3) && x !== 0 && y !== 0;
+        if (oldEdge && hash2(x, y, 11) >= .3) continue;
+        if (!oldEdge && oldBand && hash2(x, y, 12) >= .6) continue;
+        plant(x, y, tv);
       }
+    }
+    // CAMADA 2 — o terreno NOVO (leste e sul), com gerador próprio: moldura nova, faixa de mata nas bordas novas e árvores esparsas; as áreas reservadas ficam limpas.
+    const rn = Art.mulberry32(4711);
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      if (isLegacyCell(x, y)) continue;
+      const i = idx(x, y); if (solid[i]) continue;
+      const border = x === 0 || x === MW - 1 || y === MH - 1 || y === 0;
+      let forest = false;
+      if (!border) {
+        if (x >= MW - 3 || y >= MH - 3) forest = rn() < .5;
+        else if (y === 1 && x > 12) forest = rn() < .55;
+        else if (y === 2 && x > 24) forest = rn() < .5;
+        else if (y <= 3) forest = rn() < .4;
+        else forest = rn() < .06;
+        if (inReserved(x, y) || Animals.inArea(x, y, 1)) forest = false;
+      }
+      if (border || forest) plant(x, y, Math.floor(rn() * 3));
     }
     trees.sort((a, b) => a.y - b.y);
     // variação do chão
     const r2 = Art.mulberry32(99);
-    for (let i = 0; i < MW * MH; i++) { const q = r2(); groundVar[i] = q < .5 ? 0 : q < .66 ? 1 : q < .82 ? 2 : q < .93 ? 3 : 4; }
+    const gv = q => q < .5 ? 0 : q < .66 ? 1 : q < .82 ? 2 : q < .93 ? 3 : 4, r3 = Art.mulberry32(4712);
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) groundVar[idx(x, y)] = gv(isLegacyCell(x, y) ? r2() : r3());      // a variação do chão antigo continua a mesma
   }
 
+  /* Obstáculos (pedras, tocos, árvores frutíferas selvagens, mato). O mapa ANTIGO (x 2..43, y 6..31) é gerado exatamente como era (mesmo gerador, mesma ordem); o terreno NOVO tem gerador
+     próprio. Um save antigo já tem `S.obs` só do mapa antigo: `genNewLandObstacles()` completa o terreno novo uma única vez (S.world 2 → 3). */
   function genObstacles() {
-    const r = Art.mulberry32(777), list = [];
+    const list = [], r = Art.mulberry32(777);
+    for (let y = 6; y < LEGACY_MH - 2; y++) for (let x = 2; x < LEGACY_MW - 2; x++) { if (legacyTree[idx(x, y)]) continue; obstacleAt(list, r, x, y); }      // (as células de árvore do mapa antigo continuam "ocupadas", afinadas ou não)
+    return list.concat(genNewLandObstacles());
+  }
+  function genNewLandObstacles() {
+    const list = [], r = Art.mulberry32(778);
     for (let y = 6; y < MH - 2; y++) for (let x = 2; x < MW - 2; x++) {
-      if (solid[idx(x, y)] || isPath(x, y)) continue;
-      if (Math.hypot(x - POND.cx, (y - POND.cy) * 1.2) < POND.rx + 1.3) continue;
-      if (x >= PLOT.x0 - 1 && x <= PLOT.x1 + 1 && y >= PLOT.y0 - 1 && y <= PLOT.y1 + 1) continue;
-      if (x >= 5 && x <= 12 && y <= 7) continue;
-      if (inRect({ x: COOP.x - 1, y: COOP.y - 1, w: 4, h: 5 }, x, y)) continue;
-      if (Animals.inArea(x, y, 2)) continue;
-      if (inRect(dockZone, x, y)) continue;
-      const q = r();
-      if (q < .03) list.push(['rock', x, y, Math.floor(r() * 2), 3]);
-      else if (q < .045) list.push(['stump', x, y, 0, 4]);
-      else if (q < .056) list.push(['ftree', x, y, Math.floor(r() * 4), 6, 8, r() < .7 ? 1 : 0, 0]);   // árvore frutífera selvagem
-      else if (q < .13) list.push(['bush', x, y, Math.floor(r() * 3), 1]);
+      if (x < LEGACY_MW - 2 && y < LEGACY_MH - 2) continue;       // essa região é do gerador antigo
+      if (inReserved(x, y)) continue;
+      obstacleAt(list, r, x, y);
     }
     return list;
+  }
+  function obstacleAt(list, r, x, y) {
+    if (solid[idx(x, y)] || isPath(x, y)) return;
+    if (Math.hypot(x - POND.cx, (y - POND.cy) * 1.2) < POND.rx + 1.3) return;
+    if (x >= PLOT.x0 - 1 && x <= PLOT.x1 + 1 && y >= PLOT.y0 - 1 && y <= PLOT.y1 + 1) return;
+    if (x >= 5 && x <= 12 && y <= 7) return;
+    if (inRect({ x: COOP.x - 1, y: COOP.y - 1, w: 4, h: 5 }, x, y)) return;
+    if (Animals.inArea(x, y, 2)) return;
+    if (inRect(dockZone, x, y)) return;
+    const q = r();
+    if (q < .03) list.push(['rock', x, y, Math.floor(r() * 2), 3]);
+    else if (q < .045) list.push(['stump', x, y, 0, 4]);
+    else if (q < .056) list.push(['ftree', x, y, Math.floor(r() * 4), 6, 8, r() < .7 ? 1 : 0, 0]);   // árvore frutífera selvagem
+    else if (q < .13) list.push(['bush', x, y, Math.floor(r() * 3), 1]);
   }
 
   function loadObs(list) {
@@ -348,7 +401,7 @@
       }
       Animals.drawGround(c, Art.mk);          // palha, terra e poças do curral
       // manchas suaves para quebrar a repetição
-      for (let i = 0; i < 700; i++) {
+      for (let i = 0, n = Math.round(700 * MW * MH / (LEGACY_MW * LEGACY_MH)); i < n; i++) {      // (a quantidade acompanha a área)
         const x = r() * MW * TS, y = r() * MH * TS, rad = 40 + r() * 110;
         const gr = c.createRadialGradient(x, y, 0, x, y, rad);
         const col = r() < .5 ? '20,80,10' : '210,235,120';
@@ -734,6 +787,7 @@
     st.up = objOf(st.up, ['basket', 'can', 'boots', 'rod', 'reel'], dflt.up);
     Pint(st.up, 'basket', 0, BASKET_CAP.length - 1, 0); Pint(st.up, 'can', 0, CAN_CAP.length - 1, 0); Pint(st.up, 'boots', 0, BOOTS.length - 1, 0);
     Pnum(st, 'water', 0, CAN_CAP[st.up.can], Math.min(dflt.water, CAN_CAP[st.up.can]));
+    Pint(st, 'world', 2, 3, 3);      // 2 = save do mapa antigo (46 × 34): o terreno novo ainda será povoado ao carregar
     Pint(st, 'goal', 0, GOALS.length, 0); Pint(st, 'tool', 0, TOOLS.length - 1, 0); Pint(st, 'dir', 0, 3, 0);
     if (!PROD_KEYS.includes(st.selSeed)) { bad(); st.selSeed = 'cenoura'; }
     if (typeof st.char !== 'string' || !has(CHARACTERS, st.char)) { bad(); st.char = 'fazendeiro'; }
@@ -1450,6 +1504,47 @@
       f.remove(); sleeping = false; modalOpen = false; paused = false; $('modal').classList.add('hidden'); }, 3200);
   }
 
+
+  /* ---------------- mapa da fazenda (tecla G, botão 🗺) ----------------
+     A fazenda agora tem o dobro da área: o mapa mostra o terreno inteiro, os lugares conhecidos e onde o jogador está (com o retângulo do que a tela mostra). É um modal: pausa o jogo. */
+  const LANDMARKS = () => [
+    { n: 'Casa', e: '🏠', x: HOUSE.x + HOUSE.w / 2, y: HOUSE.y + HOUSE.h - .5 }, { n: 'Empório', e: '🛒', x: STALL.x + STALL.w / 2, y: STALL.y + 1 },
+    { n: 'Caixa de vendas', e: '📦', x: BIN.x + BIN.w / 2, y: BIN.y + .5 }, { n: 'Poço', e: '💧', x: WELL.x + WELL.w / 2, y: WELL.y + 1 },
+    { n: 'Galinheiro', e: '🐔', x: COOP.x + COOP.w / 2, y: COOP.y + 1 }, { n: 'Lago', e: '🎣', x: POND.cx, y: POND.cy },
+    { n: 'Curral', e: '🐄', x: (Animals.IN.x0 + Animals.IN.x1) / 2, y: (Animals.IN.y0 + Animals.IN.y1) / 2 },
+  ];
+  const MAP_COL = { grass: '#6e9f47', water: '#4a90c8', tree: '#2c5a28', rock: '#8c8c8c', stump: '#7a5a3a', ftree: '#3f7d35', bush: '#58893a', build: '#9a6a3a', path: '#cda56e', till: '#7a5230', wet: '#4a3020', fence: '#b98350', pen: '#c9b87a' };
+  function mapTileColor(x, y) {
+    if (isWater(x, y)) return MAP_COL.water;
+    if (isPath(x, y)) return MAP_COL.path;
+    const s = S.soil[idx(x, y)]; if (s) return s === 2 ? MAP_COL.wet : MAP_COL.till;
+    if (treeGrid[idx(x, y)]) return MAP_COL.tree;
+    const o = obsAt(x, y); if (o) return MAP_COL[o.type] || MAP_COL.bush;
+    if (Animals.isFence(x, y)) return MAP_COL.fence;
+    if (solid[idx(x, y)]) return MAP_COL.build;
+    if (Animals.inIn(x, y)) return MAP_COL.pen;
+    return MAP_COL.grass;
+  }
+  let mapZ = 8, mapT = 0;
+  function drawMap() {
+    const cv = $('mapCv'); if (!cv) return; const c = cv.getContext('2d'), Z = mapZ;
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) { c.fillStyle = mapTileColor(x, y); c.fillRect(x * Z, y * Z, Z, Z); }
+    c.strokeStyle = 'rgba(255,255,255,.9)'; c.lineWidth = 2; c.strokeRect(cam.x / TS * Z, cam.y / TS * Z, W / zoom / TS * Z, H / zoom / TS * Z);      // o que a tela mostra
+    c.font = Math.max(12, Z * 1.8) + 'px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    for (const l of LANDMARKS()) { c.fillStyle = 'rgba(0,0,0,.35)'; c.beginPath(); c.arc(l.x * Z, l.y * Z, Z * 1.25, 0, 6.3); c.fill(); c.fillStyle = '#fff'; c.fillText(l.e, l.x * Z, l.y * Z + 1); }
+    const px = P.x / TS * Z, py = P.y / TS * Z, pulse = 1 + .25 * Math.sin(mapT * 6);
+    c.fillStyle = '#fff'; c.beginPath(); c.arc(px, py, Z * .9 * pulse, 0, 6.3); c.fill(); c.fillStyle = '#e03030'; c.beginPath(); c.arc(px, py, Z * .55 * pulse, 0, 6.3); c.fill();
+  }
+  function openMap() {
+    currentModal = 'map';
+    mapZ = Math.max(4, Math.min(12, Math.floor(Math.min((innerWidth - 80) / MW, (innerHeight - 250) / MH))));
+    const names = LANDMARKS().map(l => l.e + ' ' + l.n).join(' &nbsp;·&nbsp; ');
+    setModal(`<h2>🗺 Mapa da fazenda</h2><canvas id="mapCv" width="${MW * mapZ}" height="${MH * mapZ}" style="display:block;margin:6px auto;max-width:100%;border:3px solid var(--wood-d);border-radius:6px;image-rendering:pixelated"></canvas>
+      <p style="font-size:13px;text-align:center">${names}<br>● você · ▭ o que a tela mostra · a fazenda tem ${MW} × ${MH} tiles</p>
+      <div class="modalBtns"><button class="mb" data-a="close">Fechar (G ou Esc)</button></div>`);
+    mapT = 0; drawMap();
+  }
+
   /* ---------------- modais ---------------- */
   function setModal(html) {
     $('modalBox').innerHTML = html; $('modal').classList.remove('hidden'); modalOpen = true; paused = true; document.body.classList.add('modalOpen');
@@ -1525,7 +1620,7 @@
       <div class="help"><b>Mover:</b> <kbd>W A S D</kbd> ou setas &nbsp; <b>Correr:</b> <kbd>Shift</kbd><br>
       <b>Ferramentas:</b> <kbd>1</kbd> Forcado · <kbd>2</kbd> Regador · <kbd>3</kbd> Sementes · <kbd>4</kbd> Luvas · <kbd>5</kbd> Picareta · <kbd>6</kbd> Machado · <kbd>7</kbd> Vara de pesca (ou roda do mouse)<br>
       <b>Usar:</b> <kbd>Espaço</kbd> ou clique no terreno próximo &nbsp; <b>Interagir:</b> <kbd>E</kbd> &nbsp; <b>Trocar semente:</b> <kbd>Q</kbd> &nbsp; <b>Chamar o cachorro:</b> <kbd>C</kbd> &nbsp; <b>Comer peixe:</b> <kbd>F</kbd><br>
-      <b>Música:</b> <kbd>M</kbd> &nbsp; <b>Efeitos:</b> <kbd>N</kbd> &nbsp; <b>Pausa:</b> <kbd>Esc</kbd></div>
+      <b>Mapa:</b> <kbd>G</kbd> &nbsp; <b>Música:</b> <kbd>M</kbd> &nbsp; <b>Efeitos:</b> <kbd>N</kbd> &nbsp; <b>Pausa:</b> <kbd>Esc</kbd></div>
       ${durabilityText() ? `<div class="help" id="durLine">${durabilityText()}</div>` : ''}
       <h3>Como jogar</h3>
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
@@ -1742,13 +1837,14 @@
     if (!running) return;
     if (sleeping) return;
     if (k === 'escape') { if (modalOpen) { if (currentModal !== 'stale') closeModal(); } else openMenu(); return; }
-    if (modalOpen) { if (k === 'e' && currentModal === 'shop') closeModal(); return; }
+    if (modalOpen) { if (k === 'e' && currentModal === 'shop') closeModal(); else if (k === 'g' && currentModal === 'map') closeModal(); return; }
     if (keys[k]) { /* repetição */ } else keys[k] = true;
     if (e.repeat && k !== ' ') return;
     if (k >= '1' && k <= '7') selectTool(+k - 1);
     else if (k === 'f') openEatFish();
     else if (k === 'q' || k === 'tab') cycleSeed(e.shiftKey ? -1 : 1);
     else if (k === 'c') callDog();
+    else if (k === 'g') openMap();
     else if (k === 'm') toggleMusic();
     else if (k === 'n') toggleSfx();
     else if (k === 'e') { const [tx, ty] = targetTile(); if (mouseMode) faceTo(tx, ty); interact(tx, ty); }
@@ -1802,6 +1898,7 @@
   function toggleSfx() { Snd.init(); const off = Snd.toggle(); $('btnMute').textContent = off ? '🔇' : '🔊'; toast(off ? 'Efeitos sonoros desligados' : 'Efeitos sonoros ligados'); }
   $('btnMute').addEventListener('click', toggleSfx);
   $('btnMusic').addEventListener('click', toggleMusic);
+  $('btnMap').addEventListener('click', () => { if (running && !modalOpen && !sleeping) openMap(); });
   $('btnMenu').addEventListener('click', () => { if (running && !modalOpen) openMenu(); });
 
   /* ---------------- galinhas ---------------- */
@@ -2432,6 +2529,8 @@
     buildStatic();
     initLake();
     loadObs(S.obsInit ? S.obs : genObstacles()); S.obsInit = true;
+    if (S.world < 3) { for (const o of genNewLandObstacles()) if (!obsAt(o[1], o[2])) addObs(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]); }      // save do mapa antigo: povoa o terreno novo (uma vez)
+    S.world = 3;
     // limpar obstáculos sobre solo/ cultivo inválido
     for (const o of [...obs]) if (solid[idx(o.x, o.y)] || (o.type === 'bush' && (Animals.inArea(o.x, o.y, 0) || inRect(COOP, o.x, o.y)))) removeObs(o);   // (também limpa mato que saves antigos deixaram no curral)
     buildGround();
@@ -2458,7 +2557,7 @@
       SaveManager.session.startNew(prev); save();
     }
     if (loadIt) openMenu();      // Continuar: o jogo começa PAUSADO (menu aberto): nenhum tempo de jogo se perde e o clique serve de gesto para o áudio
-    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKERS, PIMGS, DOCK, POND, get lake() { return lake; }, get cast() { return cast; }, fishStart, fishPress, openEatFish, openShop, deepWater, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
+    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, openMap, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKERS, PIMGS, DOCK, POND, get lake() { return lake; }, get cast() { return cast; }, fishStart, fishPress, openEatFish, openShop, deepWater, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
   }
 
   async function boot() {

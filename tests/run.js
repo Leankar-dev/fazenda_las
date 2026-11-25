@@ -29,6 +29,8 @@ const SCENARIOS = [
   'personagens-sprites',                                                              // Fase de arte: fazendeiro e fazendeira com sprite sheet (5 quadros x 4 direções)
   'casa-principal',                                                                  // Fase de arte: casa de tijolos no lugar do celeiro (desenho, colisão, porta, luzes)
   'cavalo-sprites',                                                                  // Fase de arte: cavalo animado (sprite sheet 5 quadros x 4 direções)
+  'fixture-v3-ok', 'fixture-v3-truncado', 'fixture-v3-crc', 'fixture-v3-futuro',            // Fase 3: fixtures do schema 3 (mapa 64 x 49)
+  'mapa-golden', 'mapa-save-antigo',                                                // Fase 3 (ovelhas): fazenda de 64 x 49 - o mundo antigo igual ao golden; save do mapa antigo migrado
   'lock-bloqueada', 'lock-silenciosa', 'lock-fecha-sozinha', 'lock-cede', 'lock-roubado', 'lock-sem-api',                                     // Fase 2c: Web Locks (2ª aba não inicia nem grava; Assumir aqui; roubo; sem API)
 ];
 

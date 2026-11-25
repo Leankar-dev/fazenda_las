@@ -30,7 +30,7 @@
        T.setLegacyCfg(obj) / T.readLegacyCfg()   configuração de áudio antiga
        — resto —
        T.readCfg()                     configuração de áudio gravada ({music, sfx}) ou null · T.readMeta()  marcadores do legado
-       T.fixtureState(nome)            estado (objeto) de uma fixture do tests/fixtures (v1: o próprio objeto; v2: dados + rev)
+       T.fixtureState(nome, {raw})     estado (objeto) de uma fixture do tests/fixtures (v1: o próprio objeto; v2/v3: dados + rev), com o chão já no mapa de HOJE (raw:true = como está na fixture)
        T.validRaw(dia, ouro) / T.validLegacyRaw(dia, ouro)   TEXTO de um save mínimo válido (v2 / v1)
        T.fireStorage(raw)              dispara o evento "storage" do slot como se OUTRA aba o tivesse mudado (raw null = apagou) · T.fireStorageClear()  "limpar dados"
      ===================================================================================================================================== */
@@ -40,7 +40,7 @@
     const MAGIC = 'fazenda_las-save';
     const parse = raw => { try { return JSON.parse(raw); } catch (e) { return null; } };
     const stateOf = raw => { const o = raw === null ? null : parse(raw); if (!o || typeof o !== 'object') return null; return o.magic === MAGIC ? Object.assign({}, o.data, { rev: o.rev }) : o; };
-    const minimal = (day, gold) => ({ day, gold, min: 400, soil: new Array(46 * 34).fill(0), crops: {} });
+    const minimal = (day, gold) => ({ day, gold, min: 400, soil: new Array(SaveManager.WORLD.to[0] * SaveManager.WORLD.to[1]).fill(0), crops: {} });      // (chão do tamanho do mapa de hoje)
     const wrapState = (st, slot = 1) => {           // savedAt FIXO: o mesmo estado gera sempre o mesmo texto (semeado numa carga, comparado depois de recarregar a página)
       const d = Object.assign({}, st), rev = d.rev === undefined ? 0 : d.rev; delete d.rev; delete d.v;
       return JSON.stringify(Object.assign(SaveManager.format.wrap(d, slot, rev), { savedAt: '2026-01-01T00:00:00.000Z' }));
@@ -74,7 +74,11 @@
       setLegacyCfg: o => set(LEG_CFG, JSON.stringify(o)), readLegacyCfg: () => { const r = get(LEG_CFG); return r === null ? null : parse(r); },
       readCfg: () => { const r = get(CFG); return r === null ? null : parse(r); },
       readMeta: () => { const r = get(META); return r === null ? null : parse(r); },
-      fixtureState: nome => stateOf(F[nome]),
+      // O estado de uma fixture, JÁ NO MAPA DE HOJE: as fixtures v1/v2 têm o chão do mapa antigo (46 × 34) e T.setMainState/T.setSlotState gravam envelope do schema atual, então o chão é remontado
+      // aqui (mesma regra da migração 2→3). `{ raw: true }` devolve o estado como está na fixture (para testar a própria migração).
+      fixtureState: (nome, opt) => { const st = stateOf(F[nome]); if (opt && opt.raw) return st; const [fw, fh] = SaveManager.WORLD.from, [tw, th] = SaveManager.WORLD.to;
+        if (st && Array.isArray(st.soil) && st.soil.length === fw * fh) { const out = new Array(tw * th).fill(0); for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) out[y * tw + x] = st.soil[y * fw + x]; st.soil = out; }
+        return st; },
       validRaw: (day, gold) => wrapState(minimal(day, gold)),
       validLegacyRaw: (day, gold) => JSON.stringify(Object.assign({ v: 1 }, minimal(day, gold))),
       fireStorage: raw => window.dispatchEvent(new StorageEvent('storage', { key: SLOT, newValue: raw, storageArea: localStorage })),
@@ -129,7 +133,7 @@
         await bootReady();
         ok('sem aviso de problema', !vis('saveProblem')); ok('Continuar visível', vis('btnContinue'));
         if (opt.main) ok('save principal (v2) intacto após o boot', T.readMain() === raw);
-        else { ok('o legado (v1) continua INTACTO após o boot', T.readLegacy() === raw); ok('foi importado para o formato v2 (schema 2, crc confere, slot 1)', T.mainSchema() === 2 && T.mainCrcOk() && T.mainEnv().slot === 1, T.mainSchema()); }
+        else { ok('o legado (v1) continua INTACTO após o boot', T.readLegacy() === raw); ok('foi importado para o formato v2 (schema atual, crc confere, slot 1)', T.mainSchema() === SaveManager.SCHEMA && T.mainCrcOk() && T.mainEnv().slot === 1, T.mainSchema()); }
         ok('nenhuma cópia criada', T.copies().length === 0);
         $('btnContinue').click(); const G = await gameReady(), S = G.S, A = G.Animals;
         ok('sem NaN/Infinity no estado carregado', !hasNaN(S), hasNaN(S));
@@ -142,7 +146,7 @@
         ok('sem NaN depois de passar um dia', !hasNaN(G.S), hasNaN(G.S));
         const r = G.save(); ok('salvar de novo funciona', r.ok);
         const back = T.mainState();
-        ok('regravado: v2 (schema 2, crc ok), sem pt/pk, plantas preservadas', T.mainSchema() === 2 && T.mainCrcOk() && !/"pt"|"pk"/.test(JSON.stringify(back.crops)) && (!orig.crops || Object.keys(back.crops).length === Object.keys(orig.crops).length));
+        ok('regravado: schema atual (crc ok), sem pt/pk, plantas preservadas', T.mainSchema() === SaveManager.SCHEMA && T.mainCrcOk() && !/"pt"|"pk"/.test(JSON.stringify(back.crops)) && (!orig.crops || Object.keys(back.crops).length === Object.keys(orig.crops).length));
         if (extra) await extra({ G, S: G.S, orig });
         ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
       },
@@ -194,10 +198,15 @@
   S_['fixture-shape'] = unloadable('save_v1_shape', 'incompleto');
   S_['fixture-versao'] = unloadable('save_versao_desconhecida', 'não reconhece');
   // formato v2 (envelope com crc) no slot
-  S_['fixture-v2-ok'] = loadable('save_v2_ok', async () => { ok('o save v2 carregou sem importar nada do legado', T.readLegacy() === null && T.mainEnv().schema === 2); }, { main: true });
+  S_['fixture-v2-ok'] = loadable('save_v2_ok', async () => { ok('o save v2 (mapa antigo) carregou migrado, sem importar nada do legado, e foi regravado no schema atual', T.readLegacy() === null && T.mainEnv().schema === SaveManager.SCHEMA); }, { main: true });
   S_['fixture-v2-truncado'] = unloadable('save_v2_truncado', 'corrompido', { main: true });
   S_['fixture-v2-crc'] = unloadable('save_v2_crc_errado', 'danificado', { main: true });
   S_['fixture-v2-futuro'] = unloadable('save_v2_futuro', 'mais nova', { main: true });
+  // formato ATUAL (schema 3, mapa 64 × 49): gravado pelo jogo de hoje (tests/make-fixtures.js)
+  S_['fixture-v3-ok'] = loadable('save_v3_ok', async () => { ok('o save do schema atual carregou sem migrar nada (world 3, chão do mapa novo)', T.readLegacy() === null && T.mainEnv().schema === SaveManager.SCHEMA && T.mainState().world === 3 && T.mainState().soil.length === SaveManager.WORLD.to[0] * SaveManager.WORLD.to[1]); }, { main: true });
+  S_['fixture-v3-truncado'] = unloadable('save_v3_truncado', 'corrompido', { main: true });
+  S_['fixture-v3-crc'] = unloadable('save_v3_crc_errado', 'danificado', { main: true });
+  S_['fixture-v3-futuro'] = unloadable('save_v3_futuro', 'mais nova', { main: true });
 
   /* sessão com várias cópias: mantém só 3 e oferece restaurar a válida mais recente */
   S_['rotacao-copias'] = {
@@ -849,7 +858,7 @@
     ok('lista de obstáculos inválida => o mapa é regenerado (não fica vazio)', G.obs.length > 20, G.obs.length);
     ok('felled/eggList/truffleList/milked/meatDone viram arrays', ['felled', 'eggList', 'truffleList', 'milked', 'meatDone'].every(k => Array.isArray(S[k])));
     ok('digs: só o par válido sobrou', JSON.stringify(S.digs) === '[[1,2]]', JSON.stringify(S.digs));
-    ok('chão só com 0/1/2', S.soil.every(v => v === 0 || v === 1 || v === 2) && S.soil.length === 46 * 34);
+    ok('chão só com 0/1/2', S.soil.every(v => v === 0 || v === 1 || v === 2) && S.soil.length === SaveManager.WORLD.to[0] * SaveManager.WORLD.to[1]);
   });
   S_['hostil-crops-obs'] = hostile(s => {
     s.crops = null; s.obsInit = true;
@@ -886,7 +895,7 @@
       ok('aparece "Continuar" e nenhum aviso de problema', vis('btnContinue') && !vis('saveProblem'));
       ok('o legado continua INTACTO', T.readLegacy() === legacyRaw);
       const env = T.mainEnv();
-      ok('slot v2 criado: schema 2, crc ok, dados do legado, sem v/rev dentro de data', env && env.schema === 2 && T.mainCrcOk() && env.data.day === orig.day && !('v' in env.data) && !('rev' in env.data), JSON.stringify(env && env.summary));
+      ok('slot criado: schema atual, crc ok, dados do legado, sem v/rev dentro de data', env && env.schema === SaveManager.SCHEMA && T.mainCrcOk() && env.data.day === orig.day && !('v' in env.data) && !('rev' in env.data), JSON.stringify(env && env.summary));
       ok('cópias antigas (…_backup_<ts> e a sem data) viraram cópias v2 com o mesmo ts', T.copyRaw(1500) === T.validLegacyRaw(2, 22) && T.copyRaw(null) === '{velha', JSON.stringify(T.copies().map(c => c.ts)));
       ok('as chaves antigas dessas cópias continuam lá', T.readLegacyCopy(1500) !== null && T.readLegacyCopy(null) === '{velha');
       ok('marcadores gravados (legacyMain e legacyCopies)', (T.readMeta() || {}).legacyMain === true && (T.readMeta() || {}).legacyCopies === true, JSON.stringify(T.readMeta()));
@@ -970,7 +979,7 @@
     seed() { T.reset(); },
     async run() {
       await bootReady(); const G = await startNew(); ok('save normal funciona', G.save().ok);
-      const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: T.mainEnv().rev, data: { novo: 1 }, crc: 'x' });
+      const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: SaveManager.SCHEMA + 1, rev: T.mainEnv().rev, data: { novo: 1 }, crc: 'x' });
       T.setMain(fut);                      // MESMO rev: só a trava de versão futura pode impedir a gravação
       clearToasts(); const r = G.save(true);
       ok('save() recusado com FutureSchema', r.ok === false && r.error && r.error.name === 'FutureSchema', r.error && r.error.name);
@@ -1003,6 +1012,94 @@
       data = { raw: T.readMain() || T.readLegacy() };
     },
   };
+
+  /* ---------- gravador do "golden" do mundo (usado por tests/make-golden.js; não é um teste) ----------
+     Um jogo NOVO gera o mapa de forma determinística (árvores, mato, pedras, frutíferas). Isto despeja o que foi gerado, para um teste garantir que mudar o TAMANHO do mapa
+     (Fase 3 do plano das ovelhas) não embaralha a região antiga. Largura/altura vêm do jogo (G.MW/G.MH). */
+  S_['gravar-mundo'] = {
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(0);
+      const rows = []; for (let y = 0; y < G.MH; y++) { let r = ''; for (let x = 0; x < G.MW; x++) r += G.blocked(x, y) ? '#' : '.'; rows.push(r); }
+      data = { MW: G.MW, MH: G.MH, trees: G.trees.map(t => [t.x, t.y, t.v, t.border ? 1 : 0]), obs: G.obs.map(o => [o.type, o.x, o.y, o.v, o.hp, o.age === undefined ? null : o.age, o.fruit === undefined ? null : o.fruit]), blocked: rows };
+      ok('gerou árvores e obstáculos', data.trees.length > 100 && data.obs.length > 50, data.trees.length + ' / ' + data.obs.length);
+    },
+  };
+
+  /* ---------- Fase 3 do plano das ovelhas: a fazenda dobrou de área (46 × 34 → 64 × 49) ---------- */
+  S_['mapa-golden'] = {      // o mundo ANTIGO continua igual dentro do mapa novo (tests/fixtures/mapa_golden_46x34.json, gravado ANTES da mudança)
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(0), gold = JSON.parse(F.mapa_golden_46x34), key = a => a.join(',');
+      const OW = gold.MW, OH = gold.MH, MW = G.MW, MH = G.MH, edge = (x, y) => x === OW - 1 || y === OH - 1;
+      ok('o mapa tem 64 × 49 (o dobro da área) e o golden é 46 × 34', MW === 64 && MH === 49 && OW === 46 && OH === 34 && MW * MH >= 2 * OW * OH * .99, MW + 'x' + MH);
+      const treeSet = new Set(G.trees.map(t => key([t.x, t.y, t.v])));
+      // 1) região antiga fora da faixa de 3 tiles (x < 43 e y < 31): árvores IDÊNTICAS, nas duas direções
+      const goldInner = gold.trees.filter(t => t[0] < OW - 3 && t[1] < OH - 3), newInner = G.trees.filter(t => t.x < OW - 3 && t.y < OH - 3);
+      ok('árvores do mapa antigo (fora da faixa leste/sul): as mesmas, nenhuma a mais, nenhuma a menos', goldInner.length === newInner.length && goldInner.every(t => treeSet.has(key(t.slice(0, 3)))), goldInner.length + ' / ' + newInner.length);
+      // 2) a faixa: só sobram árvores que já existiam (afinou), e a antiga moldura (x=45, y=33) virou passagem
+      const gset = new Set(gold.trees.map(t => key(t.slice(0, 3))));
+      const bandNew = G.trees.filter(t => t.x < OW && t.y < OH && (t.x >= OW - 3 || t.y >= OH - 3));
+      ok('na faixa antiga só restam árvores que já existiam (nada de árvore nova no meio do caminho)', bandNew.every(t => gset.has(key([t.x, t.y, t.v]))), bandNew.length);
+      const goldEdge = gold.trees.filter(t => edge(t[0], t[1]) && t[0] !== 0 && t[1] !== 0), newEdge = G.trees.filter(t => t.x < OW && t.y < OH && edge(t.x, t.y) && t.x !== 0 && t.y !== 0);
+      ok('a antiga moldura leste/sul virou passagem (sobram ≤ 40% das árvores)', goldEdge.length > 40 && newEdge.length <= goldEdge.length * .4, goldEdge.length + ' → ' + newEdge.length);
+      let free = 0; for (let y = 16; y <= 30; y++) if (!G.blocked(45, y)) free++;
+      ok('o corredor x=45 do curral para o leste tem passagem (≥ 8 de 15 tiles livres)', free >= 8, free);
+      ok('a moldura oeste e norte (x=0, y=0 e os cantos) continua inteira', gold.trees.filter(t => t[0] === 0 || t[1] === 0).every(t => treeSet.has(key(t.slice(0, 3)))));
+      // 3) obstáculos antigos: TODOS iguais (mesmo gerador, mesma ordem)
+      const nobs = new Map(G.obs.map(o => [o.x + ',' + o.y, o])); let same = 0; const diff = [];
+      for (const o of gold.obs) { const n = nobs.get(o[1] + ',' + o[2]); if (n && n.type === o[0] && n.v === o[3] && n.hp === o[4]) same++; else diff.push(o); }
+      ok('os ' + gold.obs.length + ' obstáculos do mapa antigo estão todos no mapa novo, iguais', same === gold.obs.length, diff.slice(0, 3).map(String).join(' | '));
+      // 4) mapa de bloqueios idêntico na região segura
+      let bad = 0; for (let y = 0; y < OH - 3; y++) for (let x = 0; x < OW - 3; x++) { const c = G.blocked(x, y) ? '#' : '.'; if (c !== gold.blocked[y][x]) bad++; }
+      ok('mapa de tiles bloqueados da região antiga (x < 43, y < 31) idêntico ao golden', bad === 0, bad + ' diferenças');
+      // 5) terreno novo
+      ok('moldura nova (x=63 e y=48) inteira', [...Array(MH).keys()].every(y => G.blocked(MW - 1, y)) && [...Array(MW).keys()].every(x => G.blocked(x, MH - 1)));
+      const newLand = G.obs.filter(o => o.x >= OW || o.y >= OH), newTrees = G.trees.filter(t => (t.x >= OW || t.y >= OH) && t.x < MW - 1 && t.y < MH - 1);
+      ok('o terreno novo tem pedras, mato e árvores (não é um deserto)', newLand.length >= 30 && newTrees.length >= 60, newLand.length + ' obs / ' + newTrees.length + ' árvores');
+      const R = [{ x: 45, y: 15, w: 18, h: 17 }, { x: 45, y: 32, w: 15, h: 12 }, { x: 5, y: 35, w: 14, h: 10 }];
+      const inR = (x, y) => R.some(r => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+      ok('áreas reservadas do terreno novo (pasto, coelheira, horta 2) sem árvore nem obstáculo', !G.trees.some(t => (t.x >= OW || t.y >= OH) && t.x < MW - 1 && t.y < MH - 1 && inR(t.x, t.y)) && !G.obs.some(o => (o.x >= OW || o.y >= OH) && inR(o.x, o.y)));
+      ok('o jogo roda 40 quadros sem erro', (steps(G, 40), !window.__errs.length), window.__errs.join('|'));
+    },
+  };
+  S_['mapa-save-antigo'] = {      // um save do MAPA ANTIGO (schema 2, chão 46×34) abre no mapa novo: terra arada, plantas e jogador no mesmo lugar; terreno novo povoado; regrava no schema 3
+    seed() { T.reset(); T.setMain(F.save_v2_ok); },
+    async run() {
+      const orig = T.fixtureState('save_v2_ok', { raw: true }), OW = 46, OH = 34;
+      await bootReady(); ok('o save antigo (schema 2) está intacto antes de carregar', T.readMain() === F.save_v2_ok && T.mainEnv().schema === 2 && orig.soil.length === OW * OH);
+      ok('sem aviso de problema e com Continuar', !vis('saveProblem') && vis('btnContinue'));
+      $('btnContinue').click(); const G = await gameReady(), S = G.S, MW = G.MW, MH = G.MH;
+      ok('o chão agora é do tamanho do mapa novo', S.soil.length === MW * MH, S.soil.length);
+      let diffs = 0, tilled = 0; for (let y = 0; y < OH; y++) for (let x = 0; x < OW; x++) { const v = orig.soil[y * OW + x]; if (v) tilled++; if (S.soil[y * MW + x] !== v) diffs++; }
+      ok('toda a terra arada/molhada está na MESMA coordenada (x,y) (' + tilled + ' tiles)', tilled >= 20 && diffs === 0, diffs + ' diferenças');
+      let nz = 0; for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) if ((x >= OW || y >= OH) && S.soil[y * MW + x]) nz++;
+      ok('o terreno novo começa sem arar', nz === 0, nz);
+      ok('as plantas continuam nas mesmas coordenadas', Object.keys(orig.crops).length > 5 && Object.keys(orig.crops).every(k => S.crops[k] && S.crops[k].t === orig.crops[k].t), Object.keys(orig.crops).length);
+      ok('ouro, dia e animais iguais', S.gold === orig.gold && S.day === orig.day && ['vaca', 'porco', 'cavalo'].every(k => S.owned[k] === orig.owned[k]), JSON.stringify(S.owned));
+      const fresh = G.obs.filter(o => o.x >= OW || o.y >= OH).length;
+      ok('o terreno novo foi povoado uma vez e o save passou para world=3', S.world === 3 && fresh >= 30, S.world + ' / ' + fresh);
+      steps(G, 60); G.endDay(false); steps(G, 20);
+      ok('sem NaN depois de passar um dia', !/NaN|Infinity/.test(JSON.stringify(G.S)));
+      const r = G.save(); ok('salvar funciona', r.ok);
+      const env = T.mainEnv();
+      ok('regravado no schema 3, crc ok, chão do tamanho novo, world 3', env.schema === SaveManager.SCHEMA && SaveManager.SCHEMA === 3 && T.mainCrcOk() && env.data.soil.length === MW * MH && env.data.world === 3, env && env.schema);
+      ok('o terreno novo está no save (obstáculos novos regravados)', env.data.obs.filter(o => o[1] >= OW || o[2] >= OH).length >= 30);
+      ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+
+  /* ---------- capturas de tela (usadas à mão: tests/capturas.js; não são testes) ---------- */
+  const captura = (cx, cy, openMapToo, zoomOut) => ({
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(0); G.P.x = cx * 64; G.P.y = cy * 64; if (zoomOut) { /* câmera inteira: o zoom do jogo é automático; só reposiciona */ }
+      for (let i = 0; i < 40; i++) G.step(.05); G.cam.x = Math.max(0, cx * 64 - 640); G.cam.y = Math.max(0, cy * 64 - 400); G.step(.05);
+      if (openMapToo) { G.openMap(); const cv = document.getElementById('mapCv'); data = { png: cv ? cv.toDataURL() : null }; }
+      ok('pronto', true);
+    },
+  });
+  S_['captura-casa'] = captura(8.5, 6.5); S_['captura-leste'] = captura(50, 22); S_['captura-sul'] = captura(20, 40); S_['captura-mapa'] = captura(40, 20, true);
 
   /* ---------- Fase 1c: 3 slots ---------- */
   const card = n => document.querySelector('.slotCard[data-slot="' + n + '"]');
@@ -1216,7 +1313,7 @@
     seed() { T.reset(); },
     async run() {
       window.__alive = true; await bootReady(); const G = await startNew(); ok('save normal funciona', G.save().ok);
-      const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: T.mainEnv().rev, data: { novo: 1 }, crc: 'x' }); T.setMain(fut);
+      const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: SaveManager.SCHEMA + 1, rev: T.mainEnv().rev, data: { novo: 1 }, crc: 'x' }); T.setMain(fut);
       G.openMenu(); $('modalBox').querySelector('[data-a=switchslot]').click(); await wait(300);
       ok('a página NÃO recarregou e o jogo continua', window.__alive === true && !!window.__game);
       ok('mostra a escolha: Baixar cópia, Sair mesmo assim, Cancelar', vis('modal') && !!$('modalBox').querySelector('[data-a=leavedl]') && !!$('modalBox').querySelector('[data-a=leaveforce]') && $('modalBox').textContent.includes('versão mais nova'), $('modalBox').textContent.slice(0, 60));
@@ -1304,7 +1401,7 @@
       ok('baixou 1 arquivo', dl.length === 1, dl.length);
       ok('nome fazenda-las-AAAA-MM-DD-slot2.json com a data LOCAL', dl[0] && dl[0].name === 'fazenda-las-' + localDate() + '-slot2.json', dl[0] && dl[0].name);
       const txt = await dl[0].text(), env = JSON.parse(txt);
-      ok('o arquivo é um envelope v2 íntegro (magic, schema 2, crc confere)', env.magic === 'fazenda_las-save' && env.schema === 2 && SaveManager.format.inspect(txt).ok);
+      ok('o arquivo é um envelope íntegro (magic, schema atual, crc confere)', env.magic === 'fazenda_las-save' && env.schema === SaveManager.SCHEMA && SaveManager.format.inspect(txt).ok);
       ok('é o jogo do slot 2: slot=2, rev=5, dia 7, ouro 700', env.slot === 2 && env.rev === 5 && env.data.day === 7 && env.data.gold === 700, env.slot + '/' + env.rev + '/' + env.data.day + '/' + env.data.gold);
       ok('sem pt/pk nem v/rev dentro de data', !/"pt"|"pk"/.test(JSON.stringify(env.data.crops)) && !('v' in env.data) && !('rev' in env.data));
       ok('mostra a confirmação com o nome do arquivo', xferShown() && xferMsg().includes(dl[0].name) && !$('xferBox').classList.contains('err'), xferMsg());
@@ -1340,7 +1437,7 @@
       const cases = [
         ['arquivo vazio', '', 'vazio'], ['texto qualquer', '{lixo', 'não é um jogo salvo'], ['JSON que não é um objeto', '"abc"', 'não é um jogo salvo'],
         ['truncado', validSave(9, 900).slice(0, 200), 'não é um jogo salvo'], ['editado sem recalcular o crc', JSON.stringify(tamper), 'alterado'],
-        ['versão futura', JSON.stringify(Object.assign({}, good, { schema: 3 })), 'versão mais nova'], ['schema desconhecido', JSON.stringify(Object.assign({}, good, { schema: 0 })), 'não reconhece'],
+        ['versão futura', JSON.stringify(Object.assign({}, good, { schema: SaveManager.SCHEMA + 1 })), 'versão mais nova'], ['schema desconhecido', JSON.stringify(Object.assign({}, good, { schema: 0 })), 'não reconhece'],
         ['crc ok mas sem dados do mapa', JSON.stringify(SaveManager.format.wrap({ day: 1, soil: [] }, 1, 1)), 'incompleto'], ['grande demais (> 2 MB)', 'x'.repeat(2000001), 'grande demais'],
       ];
       const before = T.snapshot();
@@ -1381,7 +1478,7 @@
       // 3) save v1 solto (formato antigo) também importa — e sai como v2
       await importText(T.validLegacyRaw(4, 400)); ok('v1 solto aceito; destino padrão = slot 3 (o único vazio)', xferShown() && vis('btnXferYes') && pick.value === '3', xferMsg());
       $('btnXferYes').click(); await wait(200);
-      ok('slot 3 é v2 (schema 2, slot 3, crc ok), dia 4', T.slotEnv(3) && T.slotEnv(3).schema === 2 && T.slotEnv(3).slot === 3 && SaveManager.format.inspect(T.slotRaw(3)).ok && T.slotState(3).day === 4);
+      ok('slot 3 é do schema atual (slot 3, crc ok), dia 4', T.slotEnv(3) && T.slotEnv(3).schema === SaveManager.SCHEMA && T.slotEnv(3).slot === 3 && SaveManager.format.inspect(T.slotRaw(3)).ok && T.slotState(3).day === 4);
       $('btnXferNo').click(); $('btnContinue').click(); const G = await gameReady(true);
       ok('Continuar no slot 3 abre o jogo importado (dia 4, ouro 400), pausado', G.S.day === 4 && G.S.gold === 400 && vis('modal'), G.S.day + '/' + G.S.gold);
       ok('sem erros JS', !window.__errs.length, window.__errs.join('|'));
@@ -1437,7 +1534,7 @@
       ok('fase 2: a confirmação mostra Maria e o ouro 1.234', xferShown() && xferMsg().includes('Maria') && xferMsg().includes('1.234'), xferMsg());
       $('btnXferYes').click(); await wait(250);
       const after = T.slotState(1), d1 = diff(before, stripRev(after)); ok('fase 2: o que foi gravado no slot 1 é IDÊNTICO ao jogo exportado (campo a campo)', !!after && d1.length === 0, d1.slice(0, 8).join(', '));
-      ok('fase 2: continua um envelope v2 íntegro, slot 1', T.mainSchema() === 2 && T.mainCrcOk() && T.mainEnv().slot === 1);
+      ok('fase 2: continua um envelope íntegro, slot 1', T.mainSchema() === SaveManager.SCHEMA && T.mainCrcOk() && T.mainEnv().slot === 1);
       ok('fase 2: nenhuma cópia (não havia nada a substituir)', T.copies().length === 0);
       $('btnXferNo').click(); $('btnContinue').click(); const G = await gameReady(true);
       const d2 = diff(before, JSON.parse(JSON.stringify(G.S))); ok('fase 2: Continuar abre o jogo importado IDÊNTICO ao de antes de limpar tudo', d2.length === 0, d2.slice(0, 8).join(', '));

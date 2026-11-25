@@ -7,8 +7,10 @@ const fs = require('fs');
 const path = require('path');
 const SaveLib = require('../save.js');
 
+// referência INDEPENDENTE da migração 2→3 (célula a célula, por coordenadas): o que estava em (x, y) do mapa antigo fica em (x, y) do mapa novo; o resto é 0
+const remapSoil = old => { const [fw, fh] = SaveLib.WORLD.from, [tw, th] = SaveLib.WORLD.to, out = new Array(tw * th).fill(0); for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) out[y * tw + x] = old[y * fw + x]; return out; };
 const FX = n => fs.readFileSync(path.join(__dirname, 'fixtures', n + '.json'), 'utf8');
-const MAPSIZE = 46 * 34;
+const MAPSIZE = SaveLib.WORLD.to[0] * SaveLib.WORLD.to[1], OLDSIZE = SaveLib.WORLD.from[0] * SaveLib.WORLD.from[1];      // o mapa de HOJE e o do schema 2 (a migração 2→3 remonta o chão)
 
 /* storage falso: cota em caracteres (chave + valor), `failOn(op, key, val)` para simular erros, `log` das operações */
 function mem({ quota = Infinity } = {}) {
@@ -59,7 +61,7 @@ test('fnv1a: vetores-padrão e referência independente', () => {
 test('wrap: campos do envelope, data sem v/rev, crc confere, summary com o nome', () => {
   const M = mgr(mem()), env = M.format.wrap(Object.assign(goodState(), { v: 1, rev: 99 }), 1, 7);
   assert.deepStrictEqual(Object.keys(env), ['magic', 'schema', 'app', 'slot', 'rev', 'savedAt', 'summary', 'data', 'crc']);
-  assert.strictEqual(env.magic, 'fazenda_las-save'); assert.strictEqual(env.schema, 2); assert.strictEqual(env.slot, 1); assert.strictEqual(env.rev, 7);
+  assert.strictEqual(env.magic, 'fazenda_las-save'); assert.strictEqual(env.schema, SaveLib.SCHEMA); assert.strictEqual(env.slot, 1); assert.strictEqual(env.rev, 7);
   assert.ok(!('v' in env.data) && !('rev' in env.data));
   assert.deepStrictEqual(env.summary, { char: 'fazendeira', name: 'Karen', day: 3, gold: 250, earned: 40 });
   assert.strictEqual(env.crc, fnvRef(JSON.stringify(env.data)));
@@ -75,7 +77,7 @@ test('inspect: crc adulterado, dados adulterados, truncado, tipos errados', () =
 });
 test('inspect: schema futuro vence o crc; schema 0/lixo = versão; legado v1: v:1 ok, v:99 futuro, v:0/ausente versão', () => {
   const M = mgr(mem()), env = M.format.wrap(goodState(), 1, 1), I = o => M.format.inspect(JSON.stringify(o));
-  assert.strictEqual(I(Object.assign({}, env, { schema: 3, crc: 'qualquer' })).reason, 'future');
+  assert.strictEqual(I(Object.assign({}, env, { schema: SaveLib.SCHEMA + 1, crc: 'qualquer' })).reason, 'future');
   assert.strictEqual(I(Object.assign({}, env, { schema: 0 })).reason, 'version'); assert.strictEqual(I(Object.assign({}, env, { schema: 'x' })).reason, 'version');
   assert.ok(I({ v: 1, day: 1 }).ok && I({ v: 1, day: 1 }).kind === 'v1');
   assert.strictEqual(I({ v: 99 }).reason, 'future'); assert.strictEqual(I({ v: 0 }).reason, 'version'); assert.strictEqual(I({ day: 1 }).reason, 'version');
@@ -102,13 +104,41 @@ test('migração com fixture REAL (v1): importa para v2, rev no envelope, dados 
   const raw = JSON.stringify(legacy); a.m.set('fazenda_leankar_v1', raw);
   const M = mgr(a), r = M.load();
   assert.strictEqual(r.status, 'ok'); assert.ok(r.imported && r.persisted); assert.strictEqual(r.rev, 7);
-  const env = JSON.parse(a.read(K(M).slot)); assert.strictEqual(env.schema, 2); assert.strictEqual(env.rev, 7);
+  const env = JSON.parse(a.read(K(M).slot)); assert.strictEqual(env.schema, SaveLib.SCHEMA); assert.strictEqual(env.rev, 7);
   assert.ok(!('v' in env.data) && !('rev' in env.data));
   const expected = Object.assign({}, legacy); delete expected.v; delete expected.rev;
+  expected.soil = remapSoil(expected.soil); expected.world = 2;      // + a migração 2→3 (o chão do mapa antigo vai para o mapa novo)
   assert.deepStrictEqual(env.data, JSON.parse(JSON.stringify(expected)), 'todos os campos preservados');
   assert.strictEqual(a.read('fazenda_leankar_v1'), raw, 'legado intacto'); assert.strictEqual(copiesOf(a).length, 0);
   assert.ok(M.format.inspect(a.read(K(M).slot)).ok);
 });
+test('migração 2→3: o chão do mapa 46×34 vai para o mapa 64×49 NA MESMA COORDENADA (x,y); o terreno novo começa sem arar; world=2; a entrada não é alterada', () => {
+  const [fw, fh] = SaveLib.WORLD.from, [tw, th] = SaveLib.WORLD.to, soil = new Array(fw * fh).fill(0);
+  const marks = [[0, 0, 1], [6, 8, 2], [17, 15, 1], [fw - 1, 0, 2], [0, fh - 1, 1], [fw - 1, fh - 1, 2], [30, 20, 1]];
+  for (const [x, y, v] of marks) soil[y * fw + x] = v;
+  const old = { day: 9, gold: 77, min: 500, soil, crops: { '6,8': { t: 'milho', age: 1 } }, felled: [[3, 4]], char: 'fazendeira', names: {} };
+  const before = JSON.stringify(old), a = mem();
+  a.m.set(K(mgr(a)).slot, JSON.stringify({ magic: 'fazenda_las-save', schema: 2, app: 'x', slot: 1, rev: 3, savedAt: new Date().toISOString(), summary: {}, data: old, crc: SaveLib.fnv1a(JSON.stringify(old)) }));
+  const M = mgr(a), r = M.load(); assert.strictEqual(r.status, 'ok'); const d = r.state;
+  assert.strictEqual(d.soil.length, tw * th); assert.strictEqual(d.world, 2); assert.strictEqual(JSON.stringify(old), before, 'a entrada não foi alterada');
+  for (const [x, y, v] of marks) assert.strictEqual(d.soil[y * tw + x], v, 'célula (' + x + ',' + y + ')');
+  let nz = 0; for (let i = 0; i < d.soil.length; i++) if (d.soil[i]) nz++; assert.strictEqual(nz, marks.length, 'nada além das marcas (o terreno novo está zerado)');
+  for (let y = 0; y < th; y++) for (let x = fw; x < tw; x++) assert.strictEqual(d.soil[y * tw + x], 0);
+  assert.deepStrictEqual([d.crops, d.felled, d.day, d.gold], [old.crops, old.felled, 9, 77], 'o resto do save passa intacto');
+  assert.deepStrictEqual(SaveLib.WORLD, { from: [46, 34], to: [64, 49] });
+});
+test('migração 2→3: chão com tamanho estranho NÃO é remontado (vira "dados do mapa incompletos"); save já no schema 3 passa sem mexer (sem world)', () => {
+  const a = mem(), bad = { day: 2, gold: 5, min: 500, soil: new Array(OLDSIZE - 1).fill(0), crops: {} };
+  a.m.set(K(mgr(a)).slot, JSON.stringify({ magic: 'fazenda_las-save', schema: 2, rev: 1, data: bad, crc: SaveLib.fnv1a(JSON.stringify(bad)) }));
+  const r = mgr(a).load(); assert.strictEqual(r.status, 'invalid'); assert.strictEqual(r.reason, 'shape');
+  const b = mem(), M = mgr(b); M.session.adopt({ status: 'none' }); assert.ok(M.save(goodState(4, 40)).ok);
+  const r2 = mgr(b).load(); assert.strictEqual(r2.status, 'ok'); assert.strictEqual(r2.state.soil.length, MAPSIZE); assert.ok(!('world' in JSON.parse(b.read(K(M).slot)).data), 'o schema 3 não leva a marca de migração');
+});
+test('o mapa do save.js (SAVE_WORLD) é o do jogo: LEGACY_MW/LEGACY_MH e MW/MH do game.js batem', () => {
+  const game = fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8'), m = /LEGACY_MW = (\d+), LEGACY_MH = (\d+), MW = (\d+), MH = (\d+);/.exec(game); assert.ok(m, 'constantes no game.js');
+  assert.deepStrictEqual([+m[1], +m[2]], SaveLib.WORLD.from); assert.deepStrictEqual([+m[3], +m[4]], SaveLib.WORLD.to);
+});
+
 test('todas as fixtures v1 do repositório carregam como o esperado', () => {
   const rulesShape = RULES;
   for (const [fx, status, reason] of [['save_v1_atual', 'ok'], ['save_v1_pre_carne', 'ok'], ['save_v1_minimo', 'ok'], ['save_v1_parcial', 'ok'], ['save_v1_com_ptpk', 'ok'],
@@ -191,14 +221,14 @@ test('slot com crc errado e SEM bak: invalid crc, original preservado em cópia'
   const r = mgr(a).load(); assert.strictEqual(r.status, 'invalid'); assert.strictEqual(r.reason, 'crc'); assert.strictEqual(copiesOf(a)[0].raw, raw);
 });
 test('save de versão FUTURA: load invalid/future (sem fallback por cima dele), save recusa (FutureSchema), só "Novo jogo" sobrescreve', () => {
-  const a = mem(), M = mgr(a), fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: 4, data: { day: 50 }, crc: 'x' });
+  const a = mem(), M = mgr(a), fut = JSON.stringify({ magic: 'fazenda_las-save', schema: SaveLib.SCHEMA + 1, rev: 4, data: { day: 50 }, crc: 'x' });
   a.m.set(K(M).slot, fut); a.m.set(K(M).bak, envText(M, goodState(1, 1), 1));
   const M2 = mgr(a), r = M2.load(); assert.strictEqual(r.status, 'invalid'); assert.strictEqual(r.reason, 'future'); assert.ok(copiesOf(a).some(c => c.raw === fut));
   M2.session.reset(); M2.session.adopt({ status: 'ok', rev: 4 });                         // "continuar" numa sessão que já conhece o rev 4
   const r2 = M2.save(goodState()); assert.ok(!r2.ok); assert.strictEqual(r2.error.name, 'FutureSchema'); assert.strictEqual(a.read(K(M).slot), fut);
   M2.session.reset(); M2.session.startNew(M2.peek());                                      // o jogador escolheu "Novo jogo"
   assert.ok(M2.save(goodState()).ok); assert.ok(M2.format.inspect(a.read(K(M).slot)).ok); assert.ok(copiesOf(a).some(c => c.raw === fut), 'a cópia do futuro continua');
-  const fut2 = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: JSON.parse(a.read(K(M).slot)).rev, data: {}, crc: 'x' }); a.m.set(K(M).slot, fut2);
+  const fut2 = JSON.stringify({ magic: 'fazenda_las-save', schema: SaveLib.SCHEMA + 1, rev: JSON.parse(a.read(K(M).slot)).rev, data: {}, crc: 'x' }); a.m.set(K(M).slot, fut2);
   const r3 = M2.save(goodState()); assert.ok(!r3.ok); assert.strictEqual(r3.error.name, 'FutureSchema', 'um futuro que aparece DEPOIS volta a ser protegido'); assert.strictEqual(a.read(K(M).slot), fut2);
 });
 test('removeMain apaga slot+bak+tmp mas NÃO as cópias nem o legado', () => {
@@ -271,7 +301,7 @@ test('restore recusa cópia ilegível/futura (nunca grava texto cru) e cópia v1
   const L = M.copies.list(); assert.strictEqual(L.length, 3);
   for (const b of L.filter(b => b.info.status !== 'ok')) { assert.strictEqual(M.copies.restore(b), false); assert.strictEqual(a.read(K(M).slot), null, 'nada gravado'); }
   assert.ok(M.copies.restore(L.find(b => b.info.status === 'ok'))); const env = JSON.parse(a.read(K(M).slot));
-  assert.strictEqual(env.magic, 'fazenda_las-save'); assert.strictEqual(env.schema, 2); assert.strictEqual(env.rev, 7); assert.strictEqual(env.data.v, undefined);
+  assert.strictEqual(env.magic, 'fazenda_las-save'); assert.strictEqual(env.schema, SaveLib.SCHEMA); assert.strictEqual(env.rev, 7); assert.strictEqual(env.data.v, undefined);
   assert.strictEqual(M.load().status, 'ok');
 });
 test('restore respeita a cerca de escrita (sem o bloqueio de jogo não grava nada)', () => {
@@ -465,7 +495,7 @@ test('peekBest: slot legível → o slot; slot danificado + bak bom → o bak; s
   a.m.delete(slotKey(1)); assert.strictEqual(M.peekBest().raw, bak, 'sem slot: o bak');
   a.m.delete(slotKey(1) + ':bak'); a.m.set(slotKey(1) + ':tmp', slot); assert.strictEqual(M.peekBest().raw, slot, 'só o tmp');
   a.m.delete(slotKey(1) + ':tmp'); assert.deepStrictEqual(M.peekBest(), { raw: null, rev: 0 });
-  const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: 2, data: { n: 1 }, crc: 'x' }); a.m.set(slotKey(1), fut); a.m.set(slotKey(1) + ':bak', bak);
+  const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: SaveLib.SCHEMA + 1, rev: 2, data: { n: 1 }, crc: 'x' }); a.m.set(slotKey(1), fut); a.m.set(slotKey(1) + ':bak', bak);
   assert.strictEqual(M.peekBest().raw, fut, 'save futuro nunca é "recuperado" pelo bak (igual ao load)');
   a.m.set(slotKey(1), '{lixo'); a.m.delete(slotKey(1) + ':bak'); assert.strictEqual(M.peekBest().raw, '{lixo', 'tudo ilegível: o que existir');
   const b = mem(), B = mgr(b); b.read = () => { throw new Error('bloqueado'); }; assert.deepStrictEqual(B.peekBest(), { raw: null, rev: 0 });
@@ -502,11 +532,11 @@ test('exportSlot: envelope v2 íntegro do slot pedido (campo slot, rev e savedAt
 });
 test('exportSlot: slot com texto v1 solto, ou "recuperado" do bak, sai como v2 íntegro com o jogo legível; ilegível não exporta; futuro sai byte a byte', () => {
   let a = mem(), M = mgr(a); a.m.set(slotKey(1), JSON.stringify(Object.assign({ v: 1, rev: 4 }, goodState(5, 500))));
-  let r = M.exportSlot(1), env = JSON.parse(r.text); assert.ok(r.ok); assert.strictEqual(env.schema, 2); assert.ok(!('v' in env.data) && !('rev' in env.data)); assert.strictEqual(env.rev, 4); assert.strictEqual(env.data.day, 5);
+  let r = M.exportSlot(1), env = JSON.parse(r.text); assert.ok(r.ok); assert.strictEqual(env.schema, SaveLib.SCHEMA); assert.ok(!('v' in env.data) && !('rev' in env.data)); assert.strictEqual(env.rev, 4); assert.strictEqual(env.data.day, 5);
   a = mem(); M = mgr(a); playSlot(M, 1, goodState(5, 500)); M.save(goodState(6, 600)); a.m.set(slotKey(1), '{"magic":"fazenda_las-save","schema":2,"data":{x:');
   r = mgr(a).exportSlot(1); assert.ok(r.ok && r.recovered === 'bak'); assert.strictEqual(JSON.parse(r.text).data.day, 5, 'o jogo legível (bak)');
   a = mem(); a.m.set(slotKey(1), '{lixo'); r = mgr(a).exportSlot(1); assert.deepStrictEqual([r.ok, r.reason, r.raw], [false, 'json', '{lixo']);
-  const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: 2, data: { n: 1 }, crc: 'x' }); a = mem(); a.m.set(slotKey(1), fut);
+  const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: SaveLib.SCHEMA + 1, rev: 2, data: { n: 1 }, crc: 'x' }); a = mem(); a.m.set(slotKey(1), fut);
   r = mgr(a).exportSlot(1); assert.ok(r.ok && r.future && r.text === fut, 'cópia fiel do save de versão mais nova');
 });
 test('inspectImport: aceita v2 e v1 solto (resumo do estado saneado); recusa vazio, grande, json, crc, truncado, futuro, versão e shape — sem gravar nada', () => {
@@ -517,7 +547,7 @@ test('inspectImport: aceita v2 e v1 solto (resumo do estado saneado); recusa vaz
   assert.strictEqual(I('').reason, 'empty'); assert.strictEqual(I('   \n').reason, 'empty'); assert.strictEqual(I(null).reason, 'empty'); assert.strictEqual(I(undefined).reason, 'empty');
   assert.strictEqual(I('x'.repeat(SaveLib.create(mem()).IMPORT_MAX + 1)).reason, 'size'); assert.strictEqual(I('{lixo').reason, 'json'); assert.strictEqual(I('[1,2]').reason, 'json');
   assert.strictEqual(I(JSON.stringify(Object.assign({}, env, { data: Object.assign({}, env.data, { gold: 999999 }) }))).reason, 'crc', 'editado à mão sem recalcular o crc');
-  assert.strictEqual(I(txt.slice(0, Math.floor(txt.length * .6))).reason, 'json'); assert.strictEqual(I(JSON.stringify(Object.assign({}, env, { schema: 3 }))).reason, 'future');
+  assert.strictEqual(I(txt.slice(0, Math.floor(txt.length * .6))).reason, 'json'); assert.strictEqual(I(JSON.stringify(Object.assign({}, env, { schema: SaveLib.SCHEMA + 1 }))).reason, 'future');
   assert.strictEqual(I(JSON.stringify(Object.assign({}, env, { schema: 0 }))).reason, 'version'); assert.strictEqual(I(JSON.stringify({ day: 1 })).reason, 'version');
   assert.strictEqual(I(JSON.stringify(M.format.wrap({ day: 1, soil: [] }, 1, 1))).reason, 'shape', 'crc ok mas faltam os dados do mapa');
   assert.strictEqual(mgr(mem(), { hydrate() { throw new Error('x'); }, prepare() {}, persist: S => S }).inspectImport(txt).reason, 'shape', 'hydrate que lança = recusa, não exceção');
@@ -546,13 +576,13 @@ test('importInto: slot "recuperado" (danificado + bak bom) — a cópia é a do 
   let a = mem(), M = mgr(a); playSlot(M, 1, goodState(5, 500)); M.save(goodState(6, 600)); const bak = a.read(slotKey(1) + ':bak'); a.m.set(slotKey(1), '{"magic":"fazenda_las-save","schema":2,"data":{x:');
   M = mgr(a); assert.ok(M.importInto(1, JSON.stringify(M.format.wrap(goodState(9, 900), 1, 1))).ok);
   assert.ok(copiesOf(a).some(c => c.raw === bak), 'o jogo legível (dia 5) ficou numa cópia'); assert.ok(M.format.inspect(a.read(slotKey(1))).ok); assert.strictEqual(JSON.parse(a.read(slotKey(1))).data.day, 9);
-  a = mem(); M = mgr(a); const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: 3, rev: 6, data: { n: 1 }, crc: 'x' }); a.m.set(slotKey(1), fut);
+  a = mem(); M = mgr(a); const fut = JSON.stringify({ magic: 'fazenda_las-save', schema: SaveLib.SCHEMA + 1, rev: 6, data: { n: 1 }, crc: 'x' }); a.m.set(slotKey(1), fut);
   const r = M.importInto(1, JSON.stringify(M.format.wrap(goodState(9, 900), 1, 1))); assert.ok(r.ok); assert.strictEqual(r.rev, 7, 'o rev continua o do save futuro');
   assert.ok(copiesOf(a).some(c => c.raw === fut), 'o save de versão mais nova não se perde'); assert.strictEqual(a.read(slotKey(1) + ':bak'), null, 'e não vira bak');
 });
 test('importInto: arquivo recusado NÃO grava nada (nem cópia, nem rev, nem meta); slot inválido lança', () => {
   const a = mem(), M = mgr(a); playSlot(M, 1, goodState(3, 300)); const before = snapshot(a), good = JSON.stringify(M.format.wrap(goodState(9, 900), 1, 1));
-  for (const bad of ['', '{lixo', good.slice(0, 80), JSON.stringify(Object.assign(JSON.parse(good), { data: Object.assign(JSON.parse(good).data, { gold: 901 }) })), JSON.stringify(Object.assign(JSON.parse(good), { schema: 3 })), JSON.stringify(M.format.wrap({ day: 1, soil: [] }, 1, 1))]) {
+  for (const bad of ['', '{lixo', good.slice(0, 80), JSON.stringify(Object.assign(JSON.parse(good), { data: Object.assign(JSON.parse(good).data, { gold: 901 }) })), JSON.stringify(Object.assign(JSON.parse(good), { schema: SaveLib.SCHEMA + 1 })), JSON.stringify(M.format.wrap({ day: 1, soil: [] }, 1, 1))]) {
     const r = M.importInto(1, bad); assert.strictEqual(r.ok, false); assert.ok(['empty', 'json', 'crc', 'future', 'shape'].includes(r.reason), r.reason); assert.strictEqual(snapshot(a), before, 'nada gravado: ' + r.reason);
   }
   for (const n of [0, 4, '1', null]) assert.throws(() => M.importInto(n, good), RangeError);

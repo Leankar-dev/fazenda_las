@@ -11,7 +11,10 @@ Para adicionar outro personagem: crie `assets/<pasta>/` com os mesmos 16 sprites
 ## Controles
 - **WASD / setas** mover · **Shift** correr
 - **1–7** ferramentas (Forcado, Regador, Sementes, Luvas, Picareta, Machado, **Vara de pesca**) ou roda do mouse
-- **Espaço** ou **clique** usa a ferramenta · **E** (ou botão direito) interage · **Q** troca a semente · **C** chama o cachorro · **F** comer peixe · **M** música · **N** efeitos sonoros · **Esc** pausa
+- **Espaço** ou **clique** usa a ferramenta · **E** (ou botão direito) interage · **Q** troca a semente · **C** chama o cachorro · **F** comer peixe · **G** mapa da fazenda (ou o botão 🗺) · **M** música · **N** efeitos sonoros · **Esc** pausa
+
+## O mapa
+A fazenda tem **64 × 49 tiles** (o dobro da área que tinha: era 46 × 34; cresceu para **leste e sul**). O terreno novo começa livre, com árvores e pedras espalhadas e áreas reservadas para o pasto das ovelhas, a coelheira e uma segunda horta (em construção, veja `docs/melhorias/ovelhas_coelhos/`). Aperte **G** para ver o mapa inteiro, os lugares e onde você está. Saves antigos abrem normalmente: a terra arada e as plantas ficam onde estavam (o save passou para o schema 3).
 
 ## Árvores frutíferas e machado
 - O **machado (6)** corta árvores: as do cenário (menos as da borda do mapa), as selvagens e as que você plantou. Rende madeira e deixa um toco (a picareta remove o toco). Árvores cortadas ficam cortadas no save.

@@ -17,9 +17,10 @@
          prepare(S)     copia para S o que vive fora dele (obstáculos, ovos, posição) — roda dentro do save, depois da checagem de `rev`
          persist(S)     devolve o objeto a serializar (sem estado transitório como `pt`/`pk`)
 
-   Formato v2 (uma chave por slot: `fazenda_las:v2:slot:N`, N = 1–3):
-     { magic:'fazenda_las-save', schema:2, app, slot, rev, savedAt, summary:{char,name,day,gold,earned}, data:{…estado…}, crc }
+   Formato v2 (uma chave por slot: `fazenda_las:v2:slot:N`, N = 1–3; o `v2` é do FORMATO de armazenamento, o `schema` abaixo é o dos DADOS):
+     { magic:'fazenda_las-save', schema:3, app, slot, rev, savedAt, summary:{char,name,day,gold,earned}, data:{…estado…}, crc }
      `crc` = FNV-1a 32 bits de JSON.stringify(data): detecta corrupção/truncamento, NÃO é segurança. `v` e `rev` NÃO ficam em `data`.
+     schemas: 2 = mapa 46 × 34 · 3 = mapa 64 × 49 (o chão `soil` é remontado pela migração 2→3; ver SAVE_WORLD e SAVE_MIGRATIONS).
    Formato v1 (legado): o estado "solto" com `v:1` e `rev` no topo. Ainda é LIDO (slot, cópias e chaves antigas), nunca mais gravado.
 
    Interface pública (tudo que o jogo usa):
@@ -50,7 +51,7 @@
    ============================================================ */
 
 const SaveLib = (() => {
-const SAVE_SCHEMA = 2, SAVE_MAGIC = 'fazenda_las-save', SAVE_APP = '2026.11.17', SAVE_SLOT = 1, SAVE_SLOTS = 3, SAVE_MAX_COPIES = 3;
+const SAVE_SCHEMA = 3, SAVE_MAGIC = 'fazenda_las-save', SAVE_APP = '2026.11.25', SAVE_SLOT = 1, SAVE_SLOTS = 3, SAVE_MAX_COPIES = 3;
 const SAVE_IMPORT_MAX = 2000000;                      // caracteres: um jogo tem 5–20 KB; arquivo maior que isto não é um save (recusado sem nem tentar migrar)
 const SAVE_NS = 'fazenda_las:v2:';
 const SAVE_LEGACY = { main: 'fazenda_leankar_v1', mainOld: 'fazenda_elias_v1', cfg: 'fazenda_leankar_cfg', cfgOld: 'fazenda_elias_cfg', backup: 'fazenda_leankar_v1_backup' };
@@ -79,9 +80,25 @@ function deepMerge(base, src) {
   return out;
 }
 
-/* migrações de DADOS: schema N → N+1, funções PURAS (data → data). 1→2: o `v` e o `rev` do formato solto saem do estado (o rev vai para o envelope). */
+/* O MAPA do jogo (tiles). Só o vetor `soil` depende dele: é indexado por y*largura+x, então crescer o mapa muda o significado dos índices. from = o mapa até o schema 2; to = o do schema 3
+   (a fazenda dobrou de área, para leste e sul — a origem não mexe). game.js tem LEGACY_MW/LEGACY_MH/MW/MH; tests/build.test.js confere que são os mesmos números. */
+const SAVE_WORLD = { from: [46, 34], to: [64, 49] };
+/* migrações de DADOS: schema N → N+1, funções PURAS (data → data, sem alterar a entrada).
+   1→2: o `v` e o `rev` do formato solto saem do estado (o rev vai para o envelope).
+   2→3: o chão (`soil`) do mapa 46 × 34 é remontado, linha a linha, no mapa 64 × 49 (o que é novo começa 0 = sem arar); `world: 2` marca "terreno novo ainda por povoar" (o jogo gera as
+        pedras/mato/frutíferas do terreno novo uma vez ao carregar e passa para 3). Um `soil` com outro tamanho NÃO é mexido: o jogo o recusa como "dados do mapa incompletos". */
 const SAVE_MIGRATIONS = {
   1: data => { const d = Object.assign({}, data); delete d.v; delete d.rev; return d; },
+  2: data => {
+    const d = Object.assign({}, data), [fw, fh] = SAVE_WORLD.from, [tw, th] = SAVE_WORLD.to;
+    if (Array.isArray(d.soil) && d.soil.length === fw * fh) {
+      const out = new Array(tw * th).fill(0);
+      for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) out[y * tw + x] = d.soil[y * fw + x];
+      d.soil = out;
+    }
+    d.world = 2;
+    return d;
+  },
 };
 
 /* `adapter` = { read(key) → string|null (lança se bloqueado), write(key, str) (lança em erro/cota), remove(key), keys() → string[] }
@@ -522,7 +539,7 @@ function createSaveManager(adapter, opts = {}) {
     save(obj) { try { adapter.write(K.cfg, JSON.stringify(obj)); } catch (e) { /* ignore */ } },
   };
 
-  return { SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, IMPORT_MAX: SAVE_IMPORT_MAX, configure, kit, deepMerge, load, peek, peekBest, exportText, exportSlot, inspectImport, importInto, save, removeMain, useSlot, slots, lastSlot, slot: () => cur, copies, session: sessionApi, cfg, external,
+  return { SCHEMA: SAVE_SCHEMA, WORLD: SAVE_WORLD, SLOTS: SAVE_SLOTS, IMPORT_MAX: SAVE_IMPORT_MAX, configure, kit, deepMerge, load, peek, peekBest, exportText, exportSlot, inspectImport, importInto, save, removeMain, useSlot, slots, lastSlot, slot: () => cur, copies, session: sessionApi, cfg, external,
     probe, fence, format: { MAGIC: SAVE_MAGIC, wrap, inspect, fnv1a, keys: K } };
 }
 
@@ -655,7 +672,7 @@ function createPlayLock(env = {}) {
   };
 }
 
-return { create: createSaveManager, createDurability, createPlayLock, fnv1a, safeParse, deepMerge, SCHEMA: SAVE_SCHEMA, SLOTS: SAVE_SLOTS, MAGIC: SAVE_MAGIC, LEGACY: SAVE_LEGACY, PLAY_LOCK, PLAY_CHANNEL };
+return { create: createSaveManager, createDurability, createPlayLock, fnv1a, safeParse, deepMerge, SCHEMA: SAVE_SCHEMA, WORLD: SAVE_WORLD, SLOTS: SAVE_SLOTS, MAGIC: SAVE_MAGIC, LEGACY: SAVE_LEGACY, PLAY_LOCK, PLAY_CHANNEL };
 })();
 
 /* instância do navegador + adaptador: o ÚNICO ponto do projeto que toca `localStorage` */
