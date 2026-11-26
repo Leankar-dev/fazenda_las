@@ -92,7 +92,8 @@ Os jogos ficam **só neste navegador** (`localStorage`): limpar os dados do site
 - `animais.js` – curral, comportamento dos animais e montaria
 - `pesca.js` – a **pesca**: peixes, lago, lançamento (voar → esperar → fisgar → recolher), catálogo e efeitos dos equipamentos, compra, comer/vender, saneamento do save (lógica sem DOM, testada em Node)
 - `assets/pesca/` – 29 sprites de pesca (4 peixes virados para a esquerda, varas, carretéis, iscas, acessórios, rede, **doca, estaca e margem do lago**) + `pesca.json`; gerados de `docs/equipamentos_pescca.jpeg` por `python tools/make-fishing-sprites.py`
-- `rebanho.js` – **ovelhas e coelhos** (só a lógica por enquanto: espécies, catálogo da loja, compra, tosquia, produto do coelho, comida, oficina, venda, saneamento do save; ainda não ligado ao `game.js`). Plano em `docs/melhorias/ovelhas_coelhos/`
+- `rebanho.js` – **ovelhas e coelhos**: espécies, catálogo da loja, compra, tosquia, produto do coelho, comida, oficina, venda e saneamento do save (sem DOM; `animais.js` e `game.js` só ligam). Plano, status e roteiro em `docs/melhorias/ovelhas_coelhos/`
+- `tools/simular-economia.js` – simula 30 dias do rebanho e confere as metas de preço (`node tools/simular-economia.js`)
 - `assets/animais/ovelha/`, `assets/animais/coelho/` – sprite sheets animadas (`sheet.png` + `sheet.json` + `icon.png`), geradas por `tools/make-livestock-sprites.py`; acessórios, produtos e a oficina em `assets/animais/props/` (`tools/make-livestock-props.py`, `rebanho.json`)
 - `art.js` – arte procedural complementar (plantações, empório, árvores, galinhas...)
 - `save.js` – persistência (`SaveManager`): salvar/carregar, cópias de segurança, exportar/importar, proteção contra duas abas (aviso por `rev` + bloqueio de jogo por Web Locks), sonda do storage, `persist()` e configuração de áudio

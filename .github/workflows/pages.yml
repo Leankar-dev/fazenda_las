@@ -32,6 +32,7 @@ jobs:
           node tests/save.test.js
           node tests/pesca.test.js
           node tests/rebanho.test.js
+          node tests/desempenho.test.js
           node tests/build.test.js
       - name: Montar o site
         run: node tools/build-site.js --out=_site

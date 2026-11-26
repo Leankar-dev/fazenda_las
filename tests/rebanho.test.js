@@ -191,6 +191,12 @@ test('compra e colheita não corrompem o save: depois de uma sessão inteira, o 
   const copy = JSON.parse(JSON.stringify({ reb: S.reb })), k = kit(); Rebanho.sanitize(copy, k); assert.strictEqual(k.repairs(), 0); assert.deepStrictEqual(copy.reb, S.reb);
 });
 
+test('economia: a simulação de 30 dias (tools/simular-economia.js) cumpre as metas de calibração — ovelha ~9%/dia, coelho ~20%/dia, abaixo do porco, planos cheios se pagam em até 15 dias', () => {
+  const r = require('child_process').spawnSync(process.execPath, [path.join(__dirname, '..', 'tools', 'simular-economia.js')], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, 'metas de calibração violadas: ' + r.stdout.split(/\r?\n/).filter(l => /✘/.test(l)).join(' | ') + r.stderr);
+  assert.ok(/✔ ovelha entre 7% e 13%/.test(r.stdout) && /✔ nenhum bicho novo rende mais/.test(r.stdout), 'as 4 metas aparecem no relatório');
+});
+
 (async () => {
   let pass = 0, fail = 0;
   for (const [name, fn] of tests) {

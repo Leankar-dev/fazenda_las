@@ -134,7 +134,8 @@
         ok('sem aviso de problema', !vis('saveProblem')); ok('Continuar visível', vis('btnContinue'));
         if (opt.main) ok('save principal (v2) intacto após o boot', T.readMain() === raw);
         else { ok('o legado (v1) continua INTACTO após o boot', T.readLegacy() === raw); ok('foi importado para o formato v2 (schema atual, crc confere, slot 1)', T.mainSchema() === SaveManager.SCHEMA && T.mainCrcOk() && T.mainEnv().slot === 1, T.mainSchema()); }
-        ok('nenhuma cópia criada', T.copies().length === 0);
+        if (opt.repaired) ok('save corrigido pelo jogo: o texto original ficou guardado numa cópia de segurança', T.copies().length === 1 && T.copies()[0].raw === raw, T.copies().length);
+        else ok('nenhuma cópia criada', T.copies().length === 0);
         $('btnContinue').click(); const G = await gameReady(), S = G.S, A = G.Animals;
         ok('sem NaN/Infinity no estado carregado', !hasNaN(S), hasNaN(S));
         ok('campos novos com padrão: meat número, meatDone array, laid 1|2', typeof S.meat === 'number' && Array.isArray(S.meatDone) && (S.laid === 1 || S.laid === 2), [S.meat, S.meatDone, S.laid]);
@@ -207,6 +208,22 @@
   S_['fixture-v3-truncado'] = unloadable('save_v3_truncado', 'corrompido', { main: true });
   S_['fixture-v3-crc'] = unloadable('save_v3_crc_errado', 'danificado', { main: true });
   S_['fixture-v3-futuro'] = unloadable('save_v3_futuro', 'mais nova', { main: true });
+  // o rebanho (ovelhas e coelhos), fixtures geradas por tests/make-fixture-rebanho.js
+  S_['fixture-v3-rebanho'] = loadable('save_v3_rebanho', async ({ G, S }) => {
+    const A = G.Animals, sheep = A.list.filter(a => a.kind === 'ovelha'), rab = A.list.filter(a => a.kind === 'coelho');
+    ok('4 ovelhas no pasto e 3 coelhos na coelheira, como no save', sheep.length === 4 && rab.length === 3 && S.owned.ovelha === 4 && S.owned.coelho === 3);
+    S.min = 8 * 60; const R = G.Rebanho, shorn = sheep.map(a => /^shorn/.test(A.pickRow(a, S).row));
+    ok('os relógios por ovelha do save continuam (tosquia de hoje, de ontem, nunca) e o sprite segue a regra do rebanho.js (a tosquiada só enquanto a lã não voltou)', JSON.stringify(S.reb.sheared) === JSON.stringify(T.fixtureState('save_v3_rebanho').reb.sheared) && sheep.every((a, i) => shorn[i] === !R.woolReady(S, a.idx)) && !shorn[3], JSON.stringify([S.reb.sheared, shorn]));
+    ok('as estruturas compradas estão no pasto e a oficina responde', A.decorOn(A.PENS.pasto.decor.find(d => d.req === 'cocho'), S) && A.decorOn(A.PENS.pasto.decor.find(d => d.shop === 'oficina'), S) && !A.decorOn(A.PENS.pasto.decor.find(d => d.req === 'saco'), S));
+    ok('o cesto e os produtos do save continuam (lã 3, carne 2, pele crua 1, fio 1)', S.reb.wool === 3 && S.reb.rmeat === 2 && S.reb.rpelt === 1 && S.reb.yarn === 1);
+    const back = T.mainState(); ok('regravado sem perder o rebanho', back.reb.gear.oficina === 1 && back.reb.coelheiras === 2 && back.owned.ovelha === 4 && back.reb.shearN >= 5);
+  }, { main: true });
+  S_['fixture-v3-rebanho-hostil'] = loadable('save_v3_rebanho_hostil', async ({ G, S }) => {
+    const A = G.Animals;
+    ok('save hostil: bichos limitados (8 ovelhas, 8 coelhos), vaca negativa vira 0, lã no teto do cesto, coelheiras ≤ 4, chaves e tipos errados corrigidos',
+      S.owned.ovelha === 8 && S.owned.coelho === 8 && S.owned.vaca === 0 && S.reb.wool <= 40 && S.reb.coelheiras === 4 && !('inventado' in S.reb.gear) && S.reb.gear.portao === 1 && S.reb.gear.tesoura === 0 && Array.isArray(S.reb.rdone) && S.reb.sheared.length <= 8 && S.reb.sheared.every(v => Number.isInteger(v) && v >= 0), JSON.stringify([S.owned, S.reb.wool]));
+    ok('nasceram 8 ovelhas e 8 coelhos, cada um no seu recinto', A.list.filter(a => a.kind === 'ovelha').length === 8 && A.list.filter(a => a.kind === 'coelho').length === 8);
+  }, { main: true, repaired: true });
 
   /* sessão com várias cópias: mantém só 3 e oferece restaurar a válida mais recente */
   S_['rotacao-copias'] = {
@@ -1282,6 +1299,25 @@
     },
   };
 
+  /* ---------- Fase 7 do plano das ovelhas: o REBANHO CHEIO roda no jogo de verdade ----------
+     4 vacas + 4 porcos + 2 cavalos + 8 ovelhas + 8 coelhos + cachorro (27 bichos) + 6 galinhas, câmera sobre os três recintos, 30 s de jogo. NÃO mede tempo: o corredor de testes roda com tempo VIRTUAL
+     (`--virtual-time-budget`), em que `performance.now()` não anda durante um laço síncrono. O custo da lógica é medido em Node, de verdade: tests/desempenho.test.js. */
+  S_['desempenho-rebanho'] = {
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(0), A = G.Animals, S = G.S, R = G.Rebanho; S.gold = 1e7;
+      for (const id of ['portao', 'tesoura', 'cocho', 'estacao', 'oficina', 'coelheira', 'coelheira', 'coelheira', 'coelheira', 'bebedouro', 'tigela', 'alface', 'toca']) R.buy(S, id); A.syncGear(G.solid, G.MW, S);
+      for (const [k, n] of [['vaca', 4], ['porco', 4], ['cavalo', 2]]) while (S.owned[k] < n) { S.owned[k]++; A.add(k); }
+      for (let i = 0; i < 8; i++) { R.buyAnimal(S, 'ovelha'); A.add('ovelha'); R.buyAnimal(S, 'coelho'); A.add('coelho'); }
+      S.min = 9 * 60; ok('rebanho cheio: ' + A.list.length + ' bichos (27)', A.list.length === 27, A.list.length);
+      for (let i = 0; i < 600; i++) A.update(.05, S);                       // 30 s de jogo
+      for (const [cx, cy] of [[38, 24], [55, 23], [52, 38]]) { G.P.x = cx * 64; G.P.y = cy * 64; G.cam.x = Math.max(0, cx * 64 - 640); G.cam.y = Math.max(0, cy * 64 - 400); steps(G, 30); }
+      const pens = { vaca: 'curral', porco: 'curral', ovelha: 'pasto', coelho: 'coelheira' }, inside = a => { const p = A.PENS[pens[a.kind]]; const tx = Math.floor(a.x / 64), ty = Math.floor(a.y / 64); return tx >= p.in.x0 && tx <= p.in.x1 && ty >= p.in.y0 && ty <= p.in.y1; };
+      ok('depois de 30 s e 3 vistas de câmera, cada bicho continua no seu recinto', A.list.filter(a => pens[a.kind]).every(inside), A.list.filter(a => pens[a.kind] && !inside(a)).map(a => a.kind).join(','));
+      ok('sem erros JS e sem NaN com todos os bichos desenhados nos três recintos', !window.__errs.length && !/NaN/.test(JSON.stringify(S.reb)) && A.list.every(a => Number.isFinite(a.x) && Number.isFinite(a.y)), window.__errs.join('|'));
+    },
+  };
+
   /* ---------- capturas de tela (usadas à mão: tests/capturas.js; não são testes) ---------- */
   const captura = (cx, cy, openMapToo, zoomOut) => ({
     seed() { T.reset(); },
@@ -1314,6 +1350,8 @@
     },
   });
   S_['captura-pasto-cheio'] = capturaCompras(55, 24); S_['captura-coelheira-cheia'] = capturaCompras(53, 38);
+  const capturaClima = (cx, cy, noite, chuva) => { const c = capturaCompras(cx, cy); const run = c.run; c.run = async function () { await run.call(this); const G = window.__game, S = G.S; S.min = noite ? 22 * 60 : 12 * 60; S.rain = !!chuva; for (let i = 0; i < 20; i++) G.step(.05); }; return c; };
+  S_['captura-pasto-noite'] = capturaClima(55, 24, true, false); S_['captura-pasto-chuva'] = capturaClima(55, 24, false, true); S_['captura-coelheira-noite'] = capturaClima(53, 38, true, false); S_['captura-curral-noite'] = capturaClima(38, 24, true, false);
   S_['captura-ovelhas'] = capturaBichos(54, 24); S_['captura-coelhos'] = capturaBichos(52, 38);
 
   /* ---------- Fase 1c: 3 slots ---------- */
