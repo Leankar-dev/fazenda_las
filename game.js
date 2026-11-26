@@ -271,7 +271,7 @@
     // CAMADA 3 — os recintos de HOJE (curral ampliado, pasto, coelheira) e o corredor entre eles: sem árvores; as cercas e decorações ANTIGAS saem e as novas entram (Fase 4 do plano das ovelhas)
     Animals.relayout(solid, MW);
     for (let k = trees.length - 1; k >= 0; k--) { const t = trees[k]; if (!t.border && Animals.keepClear(t.x, t.y)) { solid[idx(t.x, t.y)] = 0; treeGrid[idx(t.x, t.y)] = null; trees.splice(k, 1); } }
-    Animals.markSolid(solid, MW);
+    Animals.markSolid(solid, MW, S);      // (inclui o que o jogador já comprou para o pasto e a coelheira)
     trees.sort((a, b) => a.y - b.y);
     // variação do chão
     const r2 = Art.mulberry32(99);
@@ -1029,6 +1029,7 @@
   function interactAt(tx, ty) {
     if (!inb(tx, ty)) return null;
     const an = Animals.at(tx, ty, S); if (an) return an;
+    const ws = Animals.workshopAt(tx, ty, S); if (ws) return ws;
     if (ty === 4 && tx >= 7 && tx <= 9) return { type: 'door', label: S.min < SLEEP_FROM ? 'Dormir só depois das 18:00' : 'E — Dormir (encerra o dia)' };
     if (inRect(STALL, tx, ty)) return { type: 'shop', label: 'E — Empório' };
     if (inRect(BIN, tx, ty)) return { type: 'bin', label: 'E — Vender tudo' };
@@ -1160,6 +1161,36 @@
       <div class="modalBtns"><button class="mb alt" data-a="close">Fechar</button></div>`);
   }
   // aba "Pesca" do empório: varas, carretéis, iscas e acessórios (o que cada um faz está na descrição; tudo vem de Pesca.GEAR)
+  /* ---------------- aba Rebanho da loja e oficina (Fase 6 do plano das ovelhas) ---------------- */
+  function rebanhoShopHtml() {
+    const fx = Rebanho.fx(S), why = c => !c.ok && c.why !== 'ouro insuficiente' ? '<small class="why">' + c.why + '</small>' : '';
+    let html = `<p>Ovelhas dão <b>lã</b> (tosquie com <b>E</b>; precisa da tesoura) e coelhos dão <b>carne</b> e <b>pele</b>. Tudo vende na caixa de vendas. Cesto de lã: <b>${S.reb.wool}/${fx.woolCap}</b>.</p><h3>Animais</h3>`;
+    for (const k of Rebanho.KINDS) {
+      const a = Rebanho.ANIMALS[k], have = S.owned[k] | 0, c = Rebanho.canBuyAnimal(S, k);
+      html += `<div class="item"><img src="${Rebanho.iconUrl(k)}"><div class="txt"><b>${a.name} <small>(${have}/${a.max})</small></b><small>${a.info}</small></div>
+        <div class="btns">${have >= a.max ? '<small>no limite</small>' : `<button class="mb" data-a="rebanimal" data-k="${k}" ${c.ok ? '' : 'disabled'} title="${c.ok ? '' : c.why}">${a.cost} ◎</button>${why(c)}`}</div></div>`;
+    }
+    let group = '';
+    for (const g of Rebanho.GEAR) {
+      if (g.group !== group) { group = g.group; html += `<h3>${group}</h3>`; }
+      const c = Rebanho.canBuy(S, g.id), owned = g.kind === 'once' && !!S.reb.gear[g.id], full = g.kind === 'count' && (S.reb[g.key] | 0) >= g.max;
+      const have = g.kind === 'count' ? ` <small>(${S.reb[g.key] | 0}/${g.max})</small>` : g.kind === 'feed' ? ` <small>(você tem ${S.reb.feed[g.id] | 0}/${Rebanho.FEED_CAP})</small>` : '';
+      let btn = owned ? '<small>✓ comprado</small>' : full ? '<small>no limite</small>' : `<button class="mb" data-a="reb" data-k="${g.id}" ${c.ok ? '' : 'disabled'} title="${c.ok ? '' : c.why}">${g.cost} ◎</button>${why(c)}`;
+      if (g.id === 'racao') { const cc = Rebanho.canBuy(S, 'racao', { ignoreGold: true }), has = S.harvest.cenoura | 0; btn += ` <button class="mb alt" data-a="rebcarrot" data-k="racao" ${cc.ok && has >= g.pack ? '' : 'disabled'} title="Gasta ${g.pack} cenouras colhidas (você tem ${has})">${g.pack} 🥕</button>`; }
+      html += `<div class="item"><img src="${Rebanho.spriteUrl(g.img)}"><div class="txt"><b>${g.name}${have}</b><small>${g.info}</small></div><div class="btns">${btn}</div></div>`;
+    }
+    return html;
+  }
+  function openWorkshop() {
+    currentModal = 'workshop';
+    const rows = Rebanho.RECIPES.map(r => {
+      const c = Rebanho.canCraft(S, r.id), k = Object.keys(r.give)[0], P = Rebanho.PRODUCTS[k], have = Object.keys(r.take).map(t => (t === 'milk' ? 'leite' : Rebanho.PRODUCTS[t].name.toLowerCase()) + ' ' + (t === 'milk' ? S.milk | 0 : S.reb[t] | 0)).join(', ');
+      return `<div class="item"><img src="${Rebanho.spriteUrl(P.img)}"><div class="txt"><b>${r.name} <small>(${r.info})</small></b><small>Vale ${P.price} ◎ · você tem: ${have}</small></div>
+        <div class="btns"><button class="mb" data-a="craft" data-k="${r.id}" ${c.ok ? '' : 'disabled'} title="${c.ok ? '' : c.why}">Fazer</button>${!c.ok ? '<small class="why">' + c.why + '</small>' : ''}</div></div>`;
+    }).join('');
+    setModal(`<h2>🧶 Oficina</h2><p>Transforme o que a fazenda produz em itens mais valiosos. É instantâneo; venda o resultado na caixa de vendas.</p>${rows}<div class="modalBtns"><button class="mb alt" data-a="close">Fechar (Esc)</button></div>`);
+  }
+
   function fishShopHtml() {
     const fx = Pesca.fx(S); let html = '', group = '';
     html += `<p>Pesque no lago (de preferência da doca): os peixes <b>vendem</b> na caixa de vendas ou <b>alimentam</b> você (F). Cesto de pesca: <b>${Pesca.fishCount(S)}/${fx.capacity}</b> · iscas: ${S.bait.cera} de cera, ${S.bait.viva} vivas.</p>`;
@@ -1319,6 +1350,7 @@
         break;
       case 'shop': openShop(); break;
       case 'bin': sellAll(); break;
+      case 'oficina': openWorkshop(); break;
       case 'well': case 'water':
         if (S.water >= canMax()) toast('O regador já está cheio.'); else { Snd.water(); S.water = canMax(); burst((tx + .5) * TS, (ty + .5) * TS, 16, ['#8fd8ff', '#bfe9ff', '#fff'], { min: 30, max: 100, up: 120 }); toast('Regador cheio! (' + S.water + ')', 'good'); }
         break;
@@ -1434,8 +1466,10 @@
     total += S.eggs * EGG_PRICE + S.stone * STONE_PRICE + S.wood * WOOD_PRICE + S.milk * MILK_PRICE + S.truffle * TRUFFLE_PRICE + S.meat * MEAT_PRICE;
     n += S.eggs + S.stone + S.wood + S.milk + S.truffle + S.meat;
     total += Pesca.fishValue(S); n += Pesca.fishCount(S);
+    total += Rebanho.productValue(S); n += Rebanho.productCount(S);      // lã, fio, queijo, carne e peles de coelho
     if (!n) { toast('Nada para vender. Colha algo primeiro!', 'bad'); Snd.error(); return; }
     PROD_KEYS.forEach(k => S.harvest[k] = 0); for (const k of Pesca.FISH_KEYS) S.fish[k] = 0; S.eggs = S.stone = S.wood = S.milk = S.truffle = S.meat = 0;
+    Rebanho.takeProducts(S);
     S.gold += total; S.earned += total; S.stat.sold += n;
     Snd.coin(); toast('Vendeu ' + n + ' itens por ' + fmt(total) + ' ◎', 'gold');
     const cx = (BIN.x + 1) * TS, cy = BIN.y * TS - 20;
@@ -1625,7 +1659,11 @@
       return `<div class="item"><img src="${img}"><div class="txt"><b>${name}</b><small>${cur}${max ? ' · nível máximo' : ' → ' + nextTxt}</small></div>
         <div class="btns">${max ? '' : `<button class="mb" data-a="up" data-k="${key}" ${S.gold < costs[lvl + 1] ? 'disabled' : ''}>${costs[lvl + 1]} ◎</button>`}</div></div>`;
     };
-    const tabs = `<div class="shopTabs"><button class="mb${shopTab === 'farm' ? '' : ' alt'}" data-a="shoptab" data-k="farm">🌾 Fazenda</button><button class="mb${shopTab === 'pesca' ? '' : ' alt'}" data-a="shoptab" data-k="pesca">🎣 Pesca</button></div>`;
+    const tabs = `<div class="shopTabs"><button class="mb${shopTab === 'farm' ? '' : ' alt'}" data-a="shoptab" data-k="farm">🌾 Fazenda</button><button class="mb${shopTab === 'pesca' ? '' : ' alt'}" data-a="shoptab" data-k="pesca">🎣 Pesca</button><button class="mb${shopTab === 'rebanho' ? '' : ' alt'}" data-a="shoptab" data-k="rebanho">🐑 Rebanho</button></div>`;
+    if (shopTab === 'rebanho') {
+      setModal(`<span class="money">◎ ${fmt(S.gold)}</span><h2>🛒 Empório</h2>${tabs}${rebanhoShopHtml()}<div class="modalBtns"><button class="mb alt" data-a="close">Fechar (Esc)</button></div>`);
+      return;
+    }
     if (shopTab === 'pesca') {
       setModal(`<span class="money">◎ ${fmt(S.gold)}</span><h2>🛒 Empório</h2>${tabs}${fishShopHtml()}<div class="modalBtns"><button class="mb alt" data-a="close">Fechar (Esc)</button></div>`);
       return;
@@ -1662,7 +1700,7 @@
       <h3>Como jogar</h3>
       <div class="help">① Are a terra com o <b>Forcado</b> → ② plante com as <b>Sementes</b> → ③ regue com o <b>Regador</b> (encha no poço ou na lagoa) →
       ④ depois das 18:00, durma na porta da casa para as plantas crescerem → ⑤ colha com as <b>Luvas</b> → ⑥ venda na <b>Caixa de Vendas</b>.<br>
-      Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. As galinhas botam ovos 2× por dia (manhã e meio-dia) e os porcos dão carne 2× por dia. Dias com chuva regam tudo sozinhos!</div>
+      <b>Ovelhas e coelhos</b> (aba 🐑 Rebanho do empório): com a tesoura, <b>E</b> tosquia a ovelha (a lã volta em 2 dias); <b>E</b> no coelho dá carne ou pele (uma por dia). A <b>oficina</b> transforma lã em fio, leite em queijo e pele crua em pele curtida. Pedras e tocos saem com a <b>Picareta</b>, o mato com o <b>Forcado</b>. As galinhas botam ovos 2× por dia (manhã e meio-dia) e os porcos dão carne 2× por dia. Dias com chuva regam tudo sozinhos!</div>
       <div class="modalBtns"><button class="mb red" data-a="resetask">Novo jogo</button><button class="mb alt" data-a="switchslot">Trocar de jogo</button><button class="mb alt" data-a="chars">Trocar personagem</button><button class="mb alt" data-a="eatfish_open">🍽 Comer peixe (F)</button><button class="mb alt" data-a="rename">Alterar nome</button><button class="mb alt" data-a="save">Salvar</button><button class="mb alt" data-a="export" title="Baixa o jogo como um arquivo .json (backup ou para levar a outro aparelho)">Exportar</button><button class="mb" data-a="close">Continuar</button></div>`);
   }
 
@@ -1691,7 +1729,25 @@
     const a = b.dataset.a;
     if (a === 'close') closeModal();
     else if (a === 'sleep') { closeModal(); sleepSequence(false); }
-    else if (a === 'shoptab') { shopTab = b.dataset.k === 'pesca' ? 'pesca' : 'farm'; Snd.pop(); openShop(); }
+    else if (a === 'shoptab') { shopTab = ['pesca', 'rebanho'].includes(b.dataset.k) ? b.dataset.k : 'farm'; Snd.pop(); openShop(); }
+    else if (a === 'rebanimal') {
+      const k = b.dataset.k, an = Rebanho.ANIMALS[k], r = Rebanho.buyAnimal(S, k);
+      if (r.ok) { Animals.add(k); Snd.buy(); if (k === 'ovelha') Snd.baa(); else Snd.thump(); toast('Comprou ' + (k === 'ovelha' ? 'uma ovelha' : 'um coelho') + ' (−' + an.cost + ' ◎) — já está no ' + (k === 'ovelha' ? 'pasto' : 'coelheira') + '! 🐾', 'good'); requestSave(); openShop(); }
+      else { toast(r.why.charAt(0).toUpperCase() + r.why.slice(1), 'bad'); Snd.error(); }
+    }
+    else if (a === 'reb' || a === 'rebcarrot') {
+      const id = b.dataset.k, g = Rebanho.GEAR_BY[id], r = a === 'reb' ? Rebanho.buy(S, id) : Rebanho.buyFeedWithCarrots(S);
+      if (r.ok) {
+        Animals.syncGear(solid, MW, S); Snd.level();
+        toast(a === 'reb' ? 'Comprou: ' + g.name + ' (−' + g.cost + ' ◎)' + (id === 'portao' ? ' — o pasto está aberto: compre ovelhas!' : id === 'coelheira' ? ' — instalada na coelheira (' + S.reb.coelheiras + '/' + Rebanho.HUTCH_MAX + ')' : id === 'oficina' ? ' — fica no pasto: use E nela' : '') : 'Ração feita com 5 cenouras (+5)', 'good');
+        requestSave(); openShop();
+      } else { toast(r.why.charAt(0).toUpperCase() + r.why.slice(1), 'bad'); Snd.error(); }
+    }
+    else if (a === 'craft') {
+      const r = Rebanho.craft(S, b.dataset.k);
+      if (r.ok) { Animals.spinWorkshop(); Snd.level(); const k = Object.keys(r.give)[0]; toast('Fez: ' + Rebanho.PRODUCTS[k].name.toLowerCase() + ' (vale ' + Rebanho.PRODUCTS[k].price + ' ◎ na caixa de vendas)', 'good'); requestSave(); openWorkshop(); }
+      else { toast(r.why.charAt(0).toUpperCase() + r.why.slice(1), 'bad'); Snd.error(); }
+    }
     else if (a === 'gear') {
       const id = b.dataset.k, g = Pesca.GEAR_BY[id], r = Pesca.buy(S, id);
       if (r.ok) { Snd.level(); toast('Comprou: ' + g.name + ' (−' + g.cost + ' ◎)' + (id === 'rod1' ? ' — selecione a vara (7) e pesque no lago!' : ''), 'good'); requestSave(); openShop(); } else { Snd.error(); toast('Não deu: ' + r.why, 'bad'); }
@@ -1823,6 +1879,7 @@
     if (S.meat) items.push([ICONS.meat, 'Carne', S.meat]);
     if (S.truffle) items.push([ICONS.truffle, 'Trufas', S.truffle]);
     for (const k of Pesca.FISH_KEYS) if (S.fish[k]) items.push([Pesca.spriteUrl(k), Pesca.FISH[k].name, S.fish[k]]);
+    for (const k of Rebanho.PRODUCT_KEYS) if (S.reb[k]) items.push([Rebanho.spriteUrl(Rebanho.PRODUCTS[k].img), Rebanho.PRODUCTS[k].name, S.reb[k]]);
     if (S.stone) items.push([ICONS.stone, 'Pedras', S.stone]);
     if (S.wood) items.push([ICONS.wood, 'Madeira', S.wood]);
     const key = basketUsed() + '|' + basketCap() + '|' + items.map(i => i[1] + i[2]).join(',');
@@ -2594,7 +2651,7 @@
       SaveManager.session.startNew(prev); save();
     }
     if (loadIt) openMenu();      // Continuar: o jogo começa PAUSADO (menu aberto): nenhum tempo de jogo se perde e o clique serve de gesto para o áudio
-    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, openMap, Rebanho, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKERS, PIMGS, DOCK, POND, get lake() { return lake; }, get cast() { return cast; }, fishStart, fishPress, openEatFish, openShop, deepWater, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
+    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, openMap, Rebanho, openWorkshop, solid, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKERS, PIMGS, DOCK, POND, get lake() { return lake; }, get cast() { return cast; }, fishStart, fishPress, openEatFish, openShop, deepWater, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
   }
 
   async function boot() {

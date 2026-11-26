@@ -1219,6 +1219,69 @@
     },
   };
 
+  /* ---------- Fase 6 do plano das ovelhas: loja (aba Rebanho), compra de estruturas, venda, cesto e oficina ---------- */
+  S_['rebanho-loja'] = {
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(0), A = G.Animals, S = G.S, R = G.Rebanho;
+      const tab = k => { document.querySelector('#modalBox [data-a="shoptab"][data-k="' + k + '"]').click(); };
+      const btn = (a, k) => document.querySelector('#modalBox [data-a="' + a + '"][data-k="' + k + '"]');
+      const click = async (a, k) => { const b = btn(a, k); if (!b) return null; b.click(); await wait(30); return b; };
+      // a pessoa que nunca abre a aba não vê nada novo: a aba Fazenda continua igual e a de Rebanho só existe se clicar
+      G.openShop(); ok('o empório tem 3 abas (Fazenda, Pesca, Rebanho) e abre na Fazenda', document.querySelectorAll('#modalBox .shopTabs button').length === 3 && !!btn('animal', 'vaca') && !btn('rebanimal', 'ovelha'));
+      tab('rebanho'); await wait(30);
+      ok('aba Rebanho: 2 animais e 13 acessórios, com preço e texto', document.querySelectorAll('#modalBox .item').length === 15 && btn('rebanimal', 'ovelha').textContent.includes('220') && btn('rebanimal', 'coelho').textContent.includes('90') && btn('reb', 'portao').textContent.includes('300'));
+      // bloqueios mostram o MOTIVO e não fazem nada
+      ok('sem portão: a ovelha vem desabilitada com o motivo; sem coelheira: o coelho também', btn('rebanimal', 'ovelha').disabled && /portão do aprisco/.test(document.querySelector('#modalBox').textContent) && btn('rebanimal', 'coelho').disabled && /coelheira antes/.test(document.querySelector('#modalBox').textContent));
+      ok('com 100 ◎ (ouro inicial) o portão (300) está desabilitado: "ouro insuficiente" aparece só no title', btn('reb', 'portao').disabled && btn('reb', 'portao').title === 'ouro insuficiente');
+      btn('rebanimal', 'ovelha').click(); ok('clicar num botão desabilitado não compra nada', S.owned.ovelha === 0 && S.gold === 100);
+      // compra de estrutura = aparece sozinha; o ouro sai certo
+      S.gold = 5000; G.openShop(); tab('rebanho'); await wait(30);
+      const g0 = S.gold; await click('reb', 'portao'); ok('portão comprado: -300 ◎, marcado "✓ comprado", e a ovelha libera', S.gold === g0 - 300 && S.reb.gear.portao === 1 && !btn('reb', 'portao') && !btn('rebanimal', 'ovelha').disabled, S.gold);
+      await click('rebanimal', 'ovelha'); const sh = A.list.filter(a => a.kind === 'ovelha');
+      ok('ovelha comprada (-220 ◎): nasce no pasto e o contador vira 1/8', S.owned.ovelha === 1 && sh.length === 1 && S.gold === g0 - 520 && /\(1\/8\)/.test(document.querySelector('#modalBox').textContent), S.gold);
+      await click('reb', 'tesoura'); await click('reb', 'cocho'); await click('reb', 'feno'); await click('reb', 'oficina');
+      const cocho = A.PENS.pasto.decor.find(d => d.req === 'cocho'), tileBlocked = d => G.blocked(d.tx, d.ty);
+      ok('cocho comprado: aparece no pasto e vira sólido (o jogador não atravessa); feno visível porque há estoque', tileBlocked(cocho) && A.decorOn(cocho, S) && A.decorOn(A.PENS.pasto.decor.find(d => d.feed === 'feno'), S) && S.reb.feed.feno === 5);
+      const est = A.PENS.pasto.decor.find(d => d.req === 'estacao'); ok('a estação (ainda não comprada) NÃO aparece nem bloqueia', !A.decorOn(est, S) && !G.blocked(est.tx, est.ty) && !G.blocked(est.tx + 1, est.ty));
+      await click('reb', 'coelheira'); await click('rebanimal', 'coelho'); await click('rebanimal', 'coelho');
+      ok('coelheira (-140) instalada 1/4; 2 coelhos comprados; o 3º pede mais uma coelheira', S.reb.coelheiras === 1 && S.owned.coelho === 2 && btn('rebanimal', 'coelho').disabled && /outra coelheira/.test(document.querySelector('#modalBox').textContent));
+      ok('a coelheira nº 1 aparece e é sólida; a nº 2 ainda não', A.decorOn(A.PENS.coelheira.decor.find(d => d.n === 1), S) && !A.decorOn(A.PENS.coelheira.decor.find(d => d.n === 2), S));
+      // ração: com ouro ou com 5 cenouras colhidas
+      await click('reb', 'tigela'); S.harvest.cenoura = 7; G.openShop(); tab('rebanho'); await wait(30);
+      const gold1 = S.gold; await click('rebcarrot', 'racao'); ok('ração com 5 cenouras: +5 ração, -5 cenouras, sem gastar ouro', S.reb.feed.racao === 5 && S.harvest.cenoura === 2 && S.gold === gold1, JSON.stringify([S.reb.feed.racao, S.harvest.cenoura]));
+      G.closeModal();
+      // tosquiar e vender na caixa: o preço da lã é o do rebanho.js
+      const a1 = sh[0]; a1.x = 50 * 64 + 32; a1.y = 22 * 64 + 40; a1.moving = false; a1.wait = 99; S.min = 8 * 60; const t = [Math.floor(a1.x / 64), Math.floor(a1.y / 64)];
+      G.interact(t[0], t[1]); steps(G, 4, .1); ok('E na ovelha tosquia: +1 lã; o cesto do HUD lista "Lã"', S.reb.wool === 1 && /Lã/.test(document.getElementById('bag').textContent), S.reb.wool);
+      S.reb.rmeat = 2; S.reb.rpelt = 3; S.reb.yarn = 1; S.reb.cheese = 1; S.reb.pelt = 1; S.milk = 0; S.eggs = 0; S.harvest.cenoura = 0; const before = S.gold, want = R.productValue(S);
+      steps(G, 4, .1); ok('o cesto lista carne, pele crua, fio, queijo e pele curtida', ['Carne de coelho', 'Pele crua', 'Fio de lã', 'Queijo', 'Pele curtida'].every(n => document.getElementById('bag').textContent.includes(n)), document.getElementById('bag').textContent);
+      G.sellAll(); ok('a caixa de vendas compra tudo: ouro sobe exatamente o valor do rebanho (' + want + ' ◎) e os produtos zeram', S.gold === before + want && R.productCount(S) === 0 && want === 40 + 2 * 22 + 3 * 14 + 140 + 190 + 40, S.gold - before);
+      // oficina: E abre o menu; fazer fio gasta 3 lã
+      const of = A.PENS.pasto.decor.find(d => d.shop === 'oficina'); G.interact(of.tx + 1, of.ty);
+      ok('E na oficina abre o menu com as 3 receitas, todas "Fazer"', !!btn('craft', 'fiar') && !!btn('craft', 'queijo') && !!btn('craft', 'curtir') && btn('craft', 'fiar').disabled && /precisa de 3 lã/.test(document.querySelector('#modalBox').textContent));
+      S.reb.wool = 3; S.milk = 3; S.reb.rpelt = 2; G.openWorkshop(); await wait(30);
+      await click('craft', 'fiar'); await click('craft', 'queijo'); await click('craft', 'curtir');
+      ok('fiar, queijo e curtir: consomem os insumos e entregam fio, queijo e pele curtida; a roda gira', S.reb.wool === 0 && S.milk === 0 && S.reb.rpelt === 0 && S.reb.yarn === 1 && S.reb.cheese === 1 && S.reb.pelt === 1);
+      G.closeModal(); const b2 = S.gold; G.sellAll(); ok('e o que a oficina faz vende mais: 140 + 190 + 40 ◎', S.gold - b2 === 370, S.gold - b2);
+      // save
+      const r = G.save(), back = T.mainState(); ok('o que foi comprado persiste no save', r.ok && back.reb.gear.portao === 1 && back.reb.gear.oficina === 1 && back.reb.coelheiras === 1 && back.owned.ovelha === 1 && back.owned.coelho === 2);
+      ok('sem NaN e sem erros JS', !/NaN|Infinity/.test(JSON.stringify(S.reb)) && !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['rebanho-loja-carregar'] = {      // um save com o que foi comprado: as estruturas voltam (aparecem e bloqueiam) e a oficina responde
+    seed() { T.reset(); const st = T.fixtureState('save_v3_ok'); Object.assign(st, { owned: Object.assign({}, st.owned, { ovelha: 2, coelho: 2 }), reb: { gear: { portao: 1, tesoura: 1, cocho: 1, oficina: 1, estacao: 1 }, coelheiras: 2, feed: { feno: 3 }, wool: 4 } }); T.setMainState(st); },
+    async run() {
+      await bootReady(); $('btnContinue').click(); const G = await gameReady(), A = G.Animals, S = G.S;
+      const need = A.PENS.pasto.decor.filter(d => d.req && d.solid !== false && A.decorOn(d, S)), est = A.PENS.pasto.decor.find(d => d.req === 'estacao');
+      ok('ao carregar: cocho, oficina e o feno em estoque aparecem; as estruturas sólidas bloqueiam', need.length >= 2 && need.every(d => d.tw >= 1 && G.blocked(d.tx, d.ty)) && A.decorOn(est, S) && !G.blocked(est.tx, est.ty), need.map(d => d.k).join(','));
+      ok('as 2 coelheiras compradas aparecem (n=1 e n=2) e a 3ª não', A.decorOn(A.PENS.coelheira.decor.find(d => d.n === 2), S) && !A.decorOn(A.PENS.coelheira.decor.find(d => d.n === 3), S));
+      const of = A.PENS.pasto.decor.find(d => d.shop === 'oficina'); const it = G.interactAt ? G.interactAt(of.tx, of.ty) : A.workshopAt(of.tx, of.ty, S);
+      ok('a oficina comprada responde ao E', it && it.type === 'oficina');
+      steps(G, 60); ok('o jogo roda sem erro e o cesto mostra a lã do save', !window.__errs.length && /Lã/.test(document.getElementById('bag').textContent), window.__errs.join('|'));
+    },
+  };
+
   /* ---------- capturas de tela (usadas à mão: tests/capturas.js; não são testes) ---------- */
   const captura = (cx, cy, openMapToo, zoomOut) => ({
     seed() { T.reset(); },
@@ -1240,6 +1303,17 @@
       G.cam.x = Math.max(0, cx * 64 - 640); G.cam.y = Math.max(0, cy * 64 - 400); G.step(.05); ok('pronto', true);
     },
   });
+  const capturaCompras = (cx, cy) => ({
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(0), A = G.Animals, S = G.S, R = G.Rebanho; S.gold = 1e6;
+      for (const g of R.GEAR) { const n = g.kind === 'count' ? g.max : 1; for (let i = 0; i < n; i++) R.buy(S, g.id); } A.syncGear(G.solid, G.MW, S);
+      for (let i = 0; i < 4; i++) { R.buyAnimal(S, 'ovelha'); A.add('ovelha'); } for (let i = 0; i < 6; i++) { R.buyAnimal(S, 'coelho'); A.add('coelho'); }
+      S.min = 9 * 60; G.P.x = cx * 64; G.P.y = cy * 64; for (let i = 0; i < 100; i++) A.update(.1, S); for (let i = 0; i < 10; i++) G.step(.05);
+      G.cam.x = Math.max(0, cx * 64 - 640); G.cam.y = Math.max(0, cy * 64 - 400); G.step(.05); ok('pronto', true);
+    },
+  });
+  S_['captura-pasto-cheio'] = capturaCompras(55, 24); S_['captura-coelheira-cheia'] = capturaCompras(53, 38);
   S_['captura-ovelhas'] = capturaBichos(54, 24); S_['captura-coelhos'] = capturaBichos(52, 38);
 
   /* ---------- Fase 1c: 3 slots ---------- */

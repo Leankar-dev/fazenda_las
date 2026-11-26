@@ -38,10 +38,14 @@ const Animals = (() => {
       id: 'pasto', name: 'Pasto das ovelhas', fence: 'arame', allows: ['ovelha'],
       area: { x0: 47, y0: 16, x1: 62, y1: 30 },
       gates: [{ x: 47, y0: 21, y1: 22 }],
-      decor: [                                                                  // as estruturas compradas (cocho, estação, fardos, oficina...) entram na Fase 6; aqui só enfeite
-        { k: 'pasto_tufo', tx: 50, ty: 19, tw: 1, s: 1, solid: false }, { k: 'pasto_tufo', tx: 56, ty: 18, tw: 1, s: 1, solid: false }, { k: 'pasto_tufo', tx: 59, ty: 24, tw: 1, s: 1, solid: false },
-        { k: 'pasto_tufo', tx: 52, ty: 26, tw: 1, s: 1, solid: false }, { k: 'pasto_tufo', tx: 58, ty: 28, tw: 1, s: 1, solid: false }, { k: 'pasto_tufo', tx: 50, ty: 23, tw: 1, s: 1, solid: false },
+      decor: [                                                                  // enfeites (sempre) + o que o jogador COMPRA (req = id do acessório em rebanho.js): aparece e vira sólido na hora da compra
+        { k: 'pasto_tufo', tx: 49, ty: 24, tw: 1, s: 1, solid: false }, { k: 'pasto_tufo', tx: 56, ty: 18, tw: 1, s: 1, solid: false }, { k: 'pasto_tufo', tx: 59, ty: 22, tw: 1, s: 1, solid: false },
+        { k: 'pasto_tufo', tx: 52, ty: 26, tw: 1, s: 1, solid: false }, { k: 'pasto_tufo', tx: 55, ty: 28, tw: 1, s: 1, solid: false }, { k: 'pasto_tufo', tx: 50, ty: 22, tw: 1, s: 1, solid: false },
         { k: 'feno_redondo', tx: 60, ty: 17, tw: 1, s: 1.15 }, { k: 'feno_redondo', tx: 49, ty: 28, tw: 1, s: 1.15 },
+        { k: 'portao_aprisco', req: 'portao', tx: 47, ty: 22, tw: 1, s: .8, solid: false },
+        { k: 'cocho_ovelha', req: 'cocho', tx: 52, ty: 19, tw: 2, s: 1 }, { k: 'fardos_feno', req: 'cocho', feed: 'feno', tx: 50, ty: 19, tw: 1, s: .85, solid: false },
+        { k: 'estacao_tosquia', req: 'estacao', tx: 56, ty: 24, tw: 2, s: 1, solid: false }, { k: 'la_bruta', req: 'saco', tx: 60, ty: 20, tw: 1, s: 1.25 },
+        { k: 'oficina_anim', req: 'oficina', tx: 57, ty: 28, tw: 3, th: 2, s: 1, anim: true, shop: 'oficina' },
       ],
       patches: [['grassA', 54.5, 22.5, 6.5, 4.5], ['grassB', 54.5, 26.5, 5.5, 2.5]],
       puddles: [],
@@ -51,8 +55,12 @@ const Animals = (() => {
       area: { x0: 47, y0: 33, x1: 58, y1: 42 },
       gates: [{ x: 47, y0: 37, y1: 38 }],
       decor: [
-        { k: 'pegadas_coelho', tx: 51, ty: 36, tw: 1, s: 1, solid: false }, { k: 'pegadas_coelho', tx: 55, ty: 39, tw: 1, s: 1, solid: false }, { k: 'pegadas_coelho', tx: 52, ty: 40, tw: 1, s: 1, solid: false },
-        { k: 'pasto_tufo', tx: 49, ty: 35, tw: 1, s: .9, solid: false }, { k: 'pasto_tufo', tx: 56, ty: 35, tw: 1, s: .9, solid: false }, { k: 'pasto_tufo', tx: 54, ty: 41, tw: 1, s: .9, solid: false },
+        { k: 'pegadas_coelho', tx: 53, ty: 38, tw: 1, s: 1, solid: false }, { k: 'pegadas_coelho', tx: 55, ty: 40, tw: 1, s: 1, solid: false }, { k: 'pegadas_coelho', tx: 52, ty: 39, tw: 1, s: 1, solid: false },
+        { k: 'pasto_tufo', tx: 49, ty: 35, tw: 1, s: .9, solid: false },
+        { k: 'coelheira', req: 'coelheira', n: 1, tx: 50, ty: 35, tw: 2, s: 1 }, { k: 'coelheira', req: 'coelheira', n: 2, tx: 53, ty: 35, tw: 2, s: 1 },
+        { k: 'coelheira', req: 'coelheira', n: 3, tx: 56, ty: 35, tw: 2, s: 1 }, { k: 'coelheira', req: 'coelheira', n: 4, tx: 56, ty: 38, tw: 2, s: 1 },
+        { k: 'bebedouro_coelho', req: 'bebedouro', tx: 49, ty: 41, tw: 1, s: .9 }, { k: 'tigela_racao', req: 'tigela', tx: 52, ty: 41, tw: 1, s: 1 },
+        { k: 'canteiro_alface', req: 'alface', tx: 54, ty: 41, tw: 2, s: 1, solid: false }, { k: 'toca_coelho', req: 'toca', tx: 50, ty: 38, tw: 2, s: 1, solid: false },
       ],
       patches: [['dirt', 52.5, 37.5, 4.5, 3.2], ['grassB', 56.5, 41, 2.5, 1.6]],
       puddles: [],
@@ -170,7 +178,8 @@ const Animals = (() => {
   const DIR_NAMES = ['down', 'up', 'left', 'right'];                           // a.dir: 0 baixo · 1 cima · 2 esquerda · 3 direita
   const VIEWS = ['front', 'front34', 'back', 'back34', 'profile_left', 'profile_right'];
   const PROPS = ['milk_bucket', 'watering_trough', 'hay_bale', 'feed_trough', 'pig_feeder', 'salt_lick', 'mud_puddle', 'mud_puddle2', 'paw_print', 'apple', 'dog_bowl_water',
-    'pasto_tufo', 'pegadas_coelho', 'feno_redondo', 'trilha_terra', 'la_bruta', 'carne_coelho', 'pele_coelho'];
+    'pasto_tufo', 'pegadas_coelho', 'feno_redondo', 'trilha_terra', 'la_bruta', 'carne_coelho', 'pele_coelho',
+    'portao_aprisco', 'cocho_ovelha', 'fardos_feno', 'estacao_tosquia', 'oficina_anim', 'coelheira', 'bebedouro_coelho', 'tigela_racao', 'canteiro_alface', 'toca_coelho'];
   const TILES = ['straw', 'rooting_ground', 'grassA', 'grassB', 'dirt'];
   const IMGS = { props: {}, tiles: {} };
 
@@ -218,12 +227,30 @@ const Animals = (() => {
     for (let y = LEGACY.area.y0; y <= LEGACY.area.y1; y++) for (let x = LEGACY.area.x0; x <= LEGACY.area.x1; x++) if (legacyFence(x, y)) solid[y * MW + x] = 0;
     for (const [tx, ty, tw] of LEGACY.decor) for (let i = 0; i < tw; i++) solid[ty * MW + tx + i] = 0;
   }
-  function markSolid(solid, MW) {
+  // o decor COMPRADO (req) só existe depois da compra; feed = só com estoque; n = o enésimo da mesma compra (coelheiras)
+  const decorOn = (d, S) => {
+    if (!d.req) return true; const r = S && S.reb; if (!r || !r.gear) return false;
+    const own = d.n ? (r.coelheiras | 0) >= d.n : !!r.gear[d.req];
+    return own && (!d.feed || (r.feed && r.feed[d.feed] > 0));
+  };
+  const decorCells = d => { const out = []; for (let j = 0; j < (d.th || 1); j++) for (let i = 0; i < d.tw; i++) out.push([d.tx + i, d.ty - j]); return out; };
+  function markSolid(solid, MW, S) {
     for (const p of PEN_LIST) {
       for (let y = p.area.y0; y <= p.area.y1; y++) for (let x = p.area.x0; x <= p.area.x1; x++) if (isFenceOf(p, x, y)) solid[y * MW + x] = 1;
-      for (const d of p.decor) if (d.solid !== false) for (let i = 0; i < d.tw; i++) solid[d.ty * MW + d.tx + i] = 1;
+      for (const d of p.decor) if (d.solid !== false && decorOn(d, S)) for (const [x, y] of decorCells(d)) solid[y * MW + x] = 1;
     }
   }
+  // depois de uma compra: o que foi comprado vira sólido (e nada que não foi comprado fica sólido)
+  function syncGear(solid, MW, S) {
+    for (const p of PEN_LIST) for (const d of p.decor) if (d.req && d.solid !== false) { const on = decorOn(d, S) ? 1 : 0; for (const [x, y] of decorCells(d)) solid[y * MW + x] = on; }
+  }
+  // a oficina comprada: o E nela abre o menu de receitas
+  function workshopAt(tx, ty, S) {
+    for (const p of PEN_LIST) for (const d of p.decor) if (d.shop === 'oficina' && decorOn(d, S) && decorCells(d).some(([x, y]) => x === tx && y === ty)) return { type: 'oficina', label: 'E — Oficina' };
+    return null;
+  }
+  let spinT = 0;
+  const spinWorkshop = (sec = 2.6) => { spinT = sec; };
 
   // piso dos recintos: retalhos de palha, terra, capim e poças (desenhados no canvas do chão)
   function drawGround(c, mk) {
@@ -439,7 +466,7 @@ const Animals = (() => {
   }
 
   function update(dt, S) {
-    const P = E.P;
+    const P = E.P; if (spinT > 0) spinT -= dt;
     for (const a of list) {
       a.t += dt; if (a.hop > 0) a.hop -= dt;
       if (SHEETS[a.kind]) a.wp = a.moving ? (a.wp || 0) + dt * (a === horse && riding ? HORSE.fpsRide : sheetFps(a)) : 0;      // fase do ciclo de caminhada; parou = quadro de repouso
@@ -592,8 +619,12 @@ const Animals = (() => {
     g.fillStyle = wire ? '#d4ad78' : '#c99660'; g.beginPath(); g.ellipse(cx, by - ph, w / 2 + .5, w / 4, 0, 0, TAU); g.fill();
     if (gp) { g.fillStyle = '#d9b37a'; g.fillRect(cx - 8, by - ph - 2, 16, 4); }
   }
-  function drawDecor(g, d) {
+  function drawDecor(g, d, time) {
     const im = IMGS.props[d.k]; if (!im) return;
+    if (d.anim) {                                              // a oficina: 6 quadros da roda de fiar (gira por um tempo depois de usada)
+      const fw = im.width / 6, w = fw * d.s, h = im.height * d.s, f = spinT > 0 ? Math.floor(time * 10) % 6 : 0, x = (d.tx + d.tw / 2) * TS - w / 2, y = (d.ty + 1) * TS - 2 - h;
+      E.shadow(g, (d.tx + d.tw / 2) * TS, (d.ty + 1) * TS - 4, w * .42, 6, .22); g.drawImage(im, f * fw, 0, fw, im.height, x, y, w, h); return;
+    }
     const w = im.width * d.s, h = im.height * d.s;
     if (d.solid !== false) E.shadow(g, (d.tx + d.tw / 2) * TS, (d.ty + 1) * TS - 4, w * .42, 5, .22);
     g.drawImage(im, (d.tx + d.tw / 2) * TS - w / 2, (d.ty + 1) * TS - 2 - h, w, h);
@@ -623,7 +654,7 @@ const Animals = (() => {
       for (let y = p.area.y0; y <= p.area.y1; y++) for (let x = p.area.x0; x <= p.area.x1; x++) {
         if (isFenceOf(p, x, y) && vis(x, y)) out.push({ y: (y + 1) * TS - 5, d: () => drawFence(g, x, y) });
       }
-      for (const d of p.decor) if (vis(d.tx, d.ty)) out.push({ y: (d.ty + 1) * TS - 4, d: () => drawDecor(g, d) });
+      for (const d of p.decor) if (vis(d.tx, d.ty) && decorOn(d, S)) out.push({ y: (d.ty + 1) * TS - 4, d: () => drawDecor(g, d, time) });
     }
     if (S.digs) for (const d of S.digs) if (vis(d[0], d[1])) out.push({ y: (d[1] + .75) * TS, d: () => drawMound(g, d, time) });
     if (S.truffleList) for (const t of S.truffleList) out.push({ y: t[1], d: () => drawTruffle(g, t[0], t[1]) });
@@ -640,6 +671,7 @@ const Animals = (() => {
     AREA: PENS.curral.area, IN: PENS.curral.in, GATE: PENS.curral.gates[0], DECOR: PENS.curral.decor,
     inArea: inAnyPen, inIn: inAnyIn, isFence, isGate: (x, y) => PEN_LIST.some(p => isGate(p, x, y)),
     inAnyPen, keepClear, penOf, penTile, inLegacyArea: legacyIn, shopCatalog, pickRow, REST_FROM,
+    syncGear, workshopAt, spinWorkshop, decorOn,
     load, bind, markSolid, markSolidLegacy, relayout, drawGround, spawn, update, at, collect, drawMounted,
     mount, dismount, isRiding, resetMorning, cows, pigs, dog, freeSpot, add, callDog, dogFollowing, meatReady, MIDDAY,
     get horse() { return horse; },
