@@ -1146,6 +1146,79 @@
     },
   };
 
+  /* ---------- Fase 5 do plano das ovelhas: ovelhas e coelhos vivos (IA, quadros, tosquia, produto do coelho, fuga, descanso, save) ---------- */
+  S_['ovelhas-coelhos'] = {
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(0), A = G.Animals, S = G.S, R = G.Rebanho, P = A.PENS;
+      S.gold = 1e6; for (const id of ['portao', 'tesoura', 'coelheira']) R.buy(S, id);
+      for (let i = 0; i < 3; i++) { R.buyAnimal(S, 'ovelha'); A.add('ovelha'); } for (let i = 0; i < 2; i++) { R.buyAnimal(S, 'coelho'); A.add('coelho'); }
+      const sheep = A.list.filter(a => a.kind === 'ovelha'), rabbits = A.list.filter(a => a.kind === 'coelho');
+      const inPen = (a, p) => { const tx = Math.floor(a.x / 64), ty = Math.floor(a.y / 64); return tx >= p.in.x0 && tx <= p.in.x1 && ty >= p.in.y0 && ty <= p.in.y1 && !G.blocked(tx, ty); };
+      ok('3 ovelhas no pasto e 2 coelhos na coelheira, em tile livre', sheep.length === 3 && rabbits.length === 2 && sheep.every(a => inPen(a, P.pasto)) && rabbits.every(a => inPen(a, P.coelheira)));
+      const tile = a => [Math.floor(a.x / 64), Math.floor(a.y / 64)];
+      // ---- 40 s de vida: ficam no recinto, andam, pastam; o coelho só se desloca nos quadros NO AR do pulo
+      const AIR = G.Animals.SHEETS.coelho.air, rowsSeen = new Set(), prev = new Map(rabbits.map(r => [r.id, [r.x, r.y]])), start = new Map(A.list.map(a => [a.id, [a.x, a.y]]));
+      let groundMoves = 0, airMoves = 0, hopRows = 0, restRows = 0, sheepTravel = 0, rabbitTravel = 0; const sPrev = new Map(sheep.map(a => [a.id, [a.x, a.y]]));
+      for (let i = 0; i < 400; i++) {
+        A.update(.1, S);      // só a vida dos bichos (sem desenhar): 40 s em milissegundos
+        for (const r of rabbits) {
+          const pk = A.pickRow(r, S), q = prev.get(r.id), d = Math.hypot(r.x - q[0], r.y - q[1]); rowsSeen.add(pk.row); prev.set(r.id, [r.x, r.y]); rabbitTravel += d;
+          if (r.moving && /^(right|left|down|up)$/.test(pk.row)) { hopRows++; if (!AIR.includes(pk.frame) && d > 1e-6) groundMoves++; if (AIR.includes(pk.frame) && d > 1e-6) airMoves++; } else if (!r.moving) restRows++;
+        }
+        for (const a of sheep) { rowsSeen.add(A.pickRow(a, S).row); const q = sPrev.get(a.id); sheepTravel += Math.hypot(a.x - q[0], a.y - q[1]); sPrev.set(a.id, [a.x, a.y]); }
+      }
+      ok('depois de 40 s: ovelhas e coelhos continuam dentro dos seus recintos', sheep.every(a => inPen(a, P.pasto)) && rabbits.every(a => inPen(a, P.coelheira)), JSON.stringify([...sheep, ...rabbits].filter(a => !inPen(a, a.kind === 'ovelha' ? P.pasto : P.coelheira)).map(a => [a.kind, a.x, a.y])));
+      ok('as ovelhas andaram (> 60 px no total) e usaram linhas de andar e de pastar', sheepTravel > 60 && [...rowsSeen].some(r => /^(right|left|down|up)$/.test(r)) && [...rowsSeen].some(r => /^eat_/.test(r)), sheepTravel.toFixed(0) + ' ' + [...rowsSeen].join(','));
+      ok('os coelhos pularam (> 40 px) e o deslocamento só acontece nos quadros no ar (' + airMoves + ' passos no ar, ' + groundMoves + ' no chão)', rabbitTravel > 40 && hopRows > 20 && airMoves > 5 && groundMoves === 0, rabbitTravel.toFixed(0) + ' ' + hopRows + '/' + airMoves + '/' + groundMoves);
+      ok('os coelhos também sentam (orelhas mexendo ou mordiscando)', restRows > 20 && [...rowsSeen].some(r => /^(alert|eat)_/.test(r)), restRows);
+      // ---- tosquia
+      S.reb.sheared = []; S.min = 8 * 60; const sh = sheep[0], sh2 = sheep[1]; for (const a of A.list) { if (a !== sh) { a.x = 52 * 64; a.y = 28 * 64 + (a.id % 5) * 70; } } sh.x = 50 * 64 + 32; sh.y = 20 * 64 + 40; sh.moving = false; sh.graze = 0; sh.wait = 99;
+      let it = A.at(...tile(sh), S); ok('ovelha pronta: "E — Tosquiar" (type ovelha, ready)', it && it.type === 'ovelha' && it.label === 'E — Tosquiar' && it.ready === true, JSON.stringify(it && [it.type, it.label]));
+      ok('o balão de lã aparece (a lã é o que o jogador vê pronta)', A.KINDS.ovelha.balloon(S, sh) && A.KINDS.ovelha.balloon(S, sh).prop === 'la_bruta');
+      ok('antes de tosquiar o quadro é de LÃ (andar/parada), depois é TOSQUIADA', !/^shorn/.test(A.pickRow(sh, S).row));
+      G.interact(...tile(sh)); ok('E tosquia: +1 lã no estado, relógio marcado, balão some e o quadro vira tosquiada', S.reb.wool === 1 && S.reb.sheared[0] === S.day && A.KINDS.ovelha.balloon(S, sh) === null && /^shorn/.test(A.pickRow(sh, S).row), JSON.stringify([S.reb.wool, S.reb.sheared[0], A.pickRow(sh, S).row]));
+      it = A.at(...tile(sh), S); ok('logo depois: "Já tosquiada hoje"', it && it.label === 'Já tosquiada hoje' && it.ready === false);
+      G.interact(...tile(sh)); ok('E de novo não rende lã (só carinho)', S.reb.wool === 1);
+      S.reb.gear.tesoura = 0; sh2.x = 50 * 64 + 32; sh2.y = 24 * 64 + 40; sh2.moving = false; it = A.at(...tile(sh2), S);
+      ok('sem tesoura: a mensagem diz o que falta', it && it.label === 'Precisa da tesoura de tosa' && !it.ready, it && it.label); S.reb.gear.tesoura = 1;
+      for (let i = 0; i < 2; i++) { G.endDay(false); steps(G, 5); }
+      sh.x = 50 * 64 + 32; sh.y = 20 * 64 + 40; sh.moving = false; sh.wait = 99; S.min = 8 * 60;
+      ok('a lã voltou em 2 dias: "E — Tosquiar" e o quadro volta a ser de lã', A.at(...tile(sh), S).label === 'E — Tosquiar' && !/^shorn/.test(A.pickRow(sh, S).row));
+      // ---- coelho: produto do dia (carne/pele alternam), balão, "já deu"
+      const rb = rabbits[0]; rb.x = 50 * 64 + 32; rb.y = 36 * 64 + 40; rb.moving = false; rb.wait = 99; S.min = 8 * 60;
+      const c = R.canCollectRabbit(S, rb.idx); it = A.at(...tile(rb), S);
+      ok('coelho pronto: "E — Pegar ' + (c.kind === 'rmeat' ? 'carne' : 'pele') + '" e o balão certo', it && it.type === 'coelho' && it.ready && it.label === (c.kind === 'rmeat' ? 'E — Pegar carne' : 'E — Pegar pele') && A.KINDS.coelho.balloon(S, rb).prop === (c.kind === 'rmeat' ? 'carne_coelho' : 'pele_coelho'), JSON.stringify(it && it.label));
+      const before = S.reb[c.kind]; G.interact(...tile(rb)); ok('E dá o produto (+1 ou +2 com sorte), marca o dia e avisa "Já deu o produto de hoje"', S.reb[c.kind] >= before + 1 && S.reb.rdone[rb.idx] === S.day && A.at(...tile(rb), S).label === 'Já deu o produto de hoje' && A.KINDS.coelho.balloon(S, rb) === null, S.reb[c.kind]);
+      G.endDay(false); steps(G, 5); S.min = 8 * 60; ok('no dia seguinte o outro produto está pronto', R.canCollectRabbit(S, rb.idx).ok && R.canCollectRabbit(S, rb.idx).kind !== c.kind);
+      // ---- fuga: o jogador anda perto -> o coelho se afasta aos pulos
+      const rf = rabbits[1]; rf.x = 53 * 64; rf.y = 38 * 64; rf.moving = false; rf.wait = 99; rf.flee = 0; G.P.x = rf.x - 70; G.P.y = rf.y; const d0 = Math.hypot(G.P.x - rf.x, G.P.y - rf.y); let fled = false;
+      for (let i = 0; i < 40; i++) { G.P.moving = true; A.update(.05, S); if (rf.flee > 0) fled = true; }
+      ok('o coelho foge de quem anda perto (pulou para longe)', fled && Math.hypot(G.P.x - rf.x, G.P.y - rf.y) > d0 + 25, d0.toFixed(0) + ' → ' + Math.hypot(G.P.x - rf.x, G.P.y - rf.y).toFixed(0)); G.P.moving = false;
+      // ---- descanso à noite: ficam parados
+      S.min = A.REST_FROM + 30; const pos = [...sheep, ...rabbits].map(a => [a.x, a.y]); for (let i = 0; i < 100; i++) A.update(.1, S);
+      ok('à noite (depois das 20:30) ovelhas e coelhos ficam parados', [...sheep, ...rabbits].every((a, i) => a.x === pos[i][0] && a.y === pos[i][1] && !a.moving));
+      // ---- comida: o cocho gasta feno ao amanhecer
+      S.gold = 1e6; R.buy(S, 'cocho'); R.buy(S, 'feno'); const hay = S.reb.feed.feno; G.endDay(false); steps(G, 5);
+      ok('ao amanhecer o cocho gasta feno (1 por 4 ovelhas) e a lã volta mais rápido', S.reb.feed.feno === hay - 1 && S.reb.fed === 1 && R.fx(S).woolDays === 1, JSON.stringify([hay, S.reb.feed.feno, S.reb.fed]));
+      // ---- save: os bichos e os relógios persistem
+      S.reb.sheared[0] = S.day; const r = G.save(); const back = T.mainState();
+      ok('salvar grava bichos, produtos, acessórios e relógios', r.ok && back.owned.ovelha === 3 && back.owned.coelho === 2 && back.reb.wool >= 1 && back.reb.gear.tesoura === 1 && back.reb.sheared[0] === S.day && back.reb.feed.feno === S.reb.feed.feno, JSON.stringify(back.owned));
+      ok('sem NaN e sem erros JS', !/NaN|Infinity/.test(JSON.stringify(S.reb)) && !window.__errs.length, window.__errs.join('|'));
+    },
+  };
+  S_['ovelhas-save'] = {      // o save com bichos volta com bichos, cada um no seu recinto; save hostil não cria 4000 ovelhas
+    seed() { T.reset(); const st = T.fixtureState('save_v3_ok'); Object.assign(st, { owned: Object.assign({}, st.owned, { ovelha: 3, coelho: 4000 }), reb: { wool: 1e12, gear: { portao: 1, tesoura: 1, inventado: 1 }, coelheiras: 2, sheared: [5, 'x', -3], rdone: 'lixo', feed: { feno: 999 } } }); T.setMainState(st); },
+    async run() {
+      await bootReady(); $('btnContinue').click(); const G = await gameReady(), A = G.Animals, S = G.S, P = A.PENS;
+      ok('save hostil: coelhos limitados ao máximo (8), ovelhas 3, lã limitada ao cesto, chaves desconhecidas somem', S.owned.coelho === 8 && S.owned.ovelha === 3 && S.reb.wool <= 40 && !('inventado' in S.reb.gear) && S.reb.gear.portao === 1 && S.reb.feed.feno === 20 && Array.isArray(S.reb.rdone) && S.reb.sheared.every(v => Number.isInteger(v) && v >= 0), JSON.stringify([S.owned, S.reb.wool, S.reb.sheared]));
+      const sheep = A.list.filter(a => a.kind === 'ovelha'), rabbits = A.list.filter(a => a.kind === 'coelho');
+      const inPen = (a, p) => { const tx = Math.floor(a.x / 64), ty = Math.floor(a.y / 64); return tx >= p.in.x0 && tx <= p.in.x1 && ty >= p.in.y0 && ty <= p.in.y1; };
+      ok('os bichos do save nascem: 3 ovelhas no pasto e 8 coelhos na coelheira', sheep.length === 3 && rabbits.length === 8 && sheep.every(a => inPen(a, P.pasto)) && rabbits.every(a => inPen(a, P.coelheira)), sheep.length + '/' + rabbits.length);
+      steps(G, 80); ok('o jogo roda sem erro com todos os bichos', !window.__errs.length && !/NaN/.test(JSON.stringify(S.reb)), window.__errs.join('|'));
+    },
+  };
+
   /* ---------- capturas de tela (usadas à mão: tests/capturas.js; não são testes) ---------- */
   const captura = (cx, cy, openMapToo, zoomOut) => ({
     seed() { T.reset(); },
@@ -1157,6 +1230,17 @@
     },
   });
   S_['captura-casa'] = captura(8.5, 6.5); S_['captura-leste'] = captura(50, 22); S_['captura-sul'] = captura(20, 40); S_['captura-mapa'] = captura(40, 20, true); S_['captura-curral'] = captura(38, 26); S_['captura-coelheira'] = captura(52, 38); S_['captura-pasto'] = captura(55, 23);
+  const capturaBichos = (cx, cy, kind) => ({
+    seed() { T.reset(); },
+    async run() {
+      await bootReady(); const G = await startNew(0), A = G.Animals, S = G.S, R = G.Rebanho; S.gold = 1e6; for (const id of ['portao', 'tesoura', 'coelheira', 'bebedouro']) R.buy(S, id);
+      for (let i = 0; i < 5; i++) { R.buyAnimal(S, 'ovelha'); A.add('ovelha'); } for (let i = 0; i < 4; i++) { R.buyAnimal(S, 'coelho'); A.add('coelho'); }
+      const sh = A.list.filter(a => a.kind === 'ovelha'); R.shear(S, 0); R.shear(S, 1); S.min = 9 * 60;
+      G.P.x = cx * 64; G.P.y = cy * 64; for (let i = 0; i < 150; i++) A.update(.1, S); for (let i = 0; i < 12; i++) G.step(.05);
+      G.cam.x = Math.max(0, cx * 64 - 640); G.cam.y = Math.max(0, cy * 64 - 400); G.step(.05); ok('pronto', true);
+    },
+  });
+  S_['captura-ovelhas'] = capturaBichos(54, 24); S_['captura-coelhos'] = capturaBichos(52, 38);
 
   /* ---------- Fase 1c: 3 slots ---------- */
   const card = n => document.querySelector('.slotCard[data-slot="' + n + '"]');

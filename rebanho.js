@@ -241,7 +241,7 @@ const Rebanho = (() => {
     ANIMALS, KINDS, PRODUCTS, PRODUCT_KEYS, GEAR, GEAR_BY, RECIPES, SPRITES, OWNED_DEFAULT,
     WOOL_DAYS, WOOL_DAYS_FED, WOOL_CAP, WOOL_CAP_BAG, SPARE_EVERY, HUTCH_SLOTS, HUTCH_MAX, FEED_CAP, FEED_PER,
     spriteUrl, iconUrl, defaults, sanitize, fx, canBuy, buy, buyFeedWithCarrots, canBuyAnimal, buyAnimal,
-    canShear, shear, canCollectRabbit, collectRabbit, rabbitKind, ready, dailyTick, canCraft, craft, productValue, productCount, takeProducts,
+    woolReady, canShear, shear, canCollectRabbit, collectRabbit, rabbitKind, ready, dailyTick, canCraft, craft, productValue, productCount, takeProducts,
   };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = Rebanho;      // testes em Node: require('../rebanho.js')

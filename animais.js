@@ -138,14 +138,39 @@ const Animals = (() => {
     cavalo: { pen: 'curral', owned: 'cavalo', h: 104, speed: 38, step: 9, bob: .6, touch: 84, sheet: 'cavalo',       // sem right/left: usa a sheet; o balanço é só um respiro, as pernas já se mexem nos quadros
       shop: { name: 'Cavalo', cost: 650, max: 2, img: 'assets/animais/cavalo/icon.png', info: 'Monte com E e cavalgue quase 2× mais rápido.' },
       interact: (S, a) => ({ type: 'cavalo', label: 'E — Montar', ref: a }) },
-    // Fase 5 do plano: a IA, a interação e o balão destas duas entram lá. Já têm recinto, tamanho e sheet; não aparecem enquanto S.owned.ovelha/coelho não existirem (Fase 6: loja).
-    ovelha: { pen: 'pasto', owned: 'ovelha', h: 54, speed: 22, step: 8, bob: 1.2, touch: 52, sheet: 'ovelha' },
-    coelho: { pen: 'coelheira', owned: 'coelho', h: 30, speed: 40, step: 10, bob: 0, touch: 44, sheet: 'coelho' },
+    // Fase 5: ovelha (tosquia, pastar, andar em rebanho) e coelho (pulo, mordiscar, orelhas, foge de quem corre). Descansam à noite (`rests`). As regras (tesoura, intervalo da lã, produto do dia) são do rebanho.js.
+    ovelha: { pen: 'pasto', owned: 'ovelha', h: 54, speed: 22, step: 8, bob: 1.2, touch: 52, sheet: 'ovelha', ai: 'sheep', rests: true,
+      pick: (a, S) => sheepFrame(a, S),
+      interact: (S, a) => { const c = Rebanho.canShear(S, a.idx); return { type: 'ovelha', label: c.ok ? 'E — Tosquiar' : cap1(c.why), ref: a, ready: c.ok, why: c.why }; },
+      idle: (S, a) => !Rebanho.canShear(S, a.idx).ok,
+      balloon: (S, a) => Rebanho.canShear(S, a.idx).ok ? { prop: 'la_bruta' } : null },
+    coelho: { pen: 'coelheira', owned: 'coelho', h: 30, speed: 40, step: 10, bob: 0, touch: 44, sheet: 'coelho', ai: 'hop', rests: true,
+      pick: (a, S) => rabbitFrame(a, S),
+      interact: (S, a) => { const c = Rebanho.canCollectRabbit(S, a.idx); return { type: 'coelho', label: c.ok ? (c.kind === 'rmeat' ? 'E — Pegar carne' : 'E — Pegar pele') : cap1(c.why), ref: a, ready: c.ok, why: c.why }; },
+      idle: (S, a) => !Rebanho.canCollectRabbit(S, a.idx).ok,
+      balloon: (S, a) => { const c = Rebanho.canCollectRabbit(S, a.idx); return c.ok ? { prop: c.kind === 'rmeat' ? 'carne_coelho' : 'pele_coelho' } : null; } },
   };
+  const cap1 = t => t.charAt(0).toUpperCase() + t.slice(1);
+  const REST_FROM = 20 * 60 + 30;                                            // a partir daqui ovelhas e coelhos descansam (ficam parados)
+  const resting = (K, S) => !!K.rests && S.min >= REST_FROM;
+  // que quadro mostrar: ovelha — andando (lã ou tosquiada), pastando (a pose "cabeça baixa" da folha; tosquiada já é essa pose) ou parada
+  function sheepFrame(a, S) {
+    const SH = SHEEP, d = DIR_NAMES[a.dir] || 'down', shorn = !Rebanho.woolReady(S, a.idx), pre = shorn ? 'shorn_' : '', side = a.face || 'left';
+    if (a.moving) return { row: pre + d, frame: SH.loop.walk[Math.floor(a.wp || 0) % SH.loop.walk.length] };
+    if (a.graze > 0) return shorn ? { row: 'shorn_' + side, frame: SH.idle } : { row: 'eat_' + side, frame: Math.floor(a.t * SH.fps.eat) % SH.loop.eat.length };
+    return { row: pre + d, frame: SH.idle };
+  }
+  // coelho — pulando (5 quadros: agacha, sai, topo, desce, aterrissa), mordiscando ou com as orelhas mexendo
+  function rabbitFrame(a, S) {
+    const SH = RABBIT, d = DIR_NAMES[a.dir] || 'down', side = a.face || 'left';
+    if (a.moving) return { row: d, frame: SH.hop[Math.floor(a.wp || 0) % SH.hop.length] };
+    if (a.mode === 'eat') return { row: 'eat_' + side, frame: Math.floor(a.t * SH.fps.eat) % 4 };
+    return { row: 'alert_' + side, frame: Math.floor((a.t + a.id) * SH.fps.alert) % 4 };
+  }
   const DIR_NAMES = ['down', 'up', 'left', 'right'];                           // a.dir: 0 baixo · 1 cima · 2 esquerda · 3 direita
   const VIEWS = ['front', 'front34', 'back', 'back34', 'profile_left', 'profile_right'];
   const PROPS = ['milk_bucket', 'watering_trough', 'hay_bale', 'feed_trough', 'pig_feeder', 'salt_lick', 'mud_puddle', 'mud_puddle2', 'paw_print', 'apple', 'dog_bowl_water',
-    'pasto_tufo', 'pegadas_coelho', 'feno_redondo', 'trilha_terra'];
+    'pasto_tufo', 'pegadas_coelho', 'feno_redondo', 'trilha_terra', 'la_bruta', 'carne_coelho', 'pele_coelho'];
   const TILES = ['straw', 'rooting_ground', 'grassA', 'grassB', 'dirt'];
   const IMGS = { props: {}, tiles: {} };
 
@@ -240,7 +265,7 @@ const Animals = (() => {
     return [(p.in.x0 + 3) * TS, (p.in.y0 + 3) * TS];
   }
   function mk(kind, x, y, extra) {
-    return Object.assign({ id: nextId++, kind, x, y, dir: Math.floor(rnd(0, 4)), moving: false, wait: rnd(0, 3), tx: 0, ty: 0, t: rnd(0, 9), idle: 0, hop: 0, love: 0, stuck: 0, lastBark: 0 }, extra || {});
+    return Object.assign({ id: nextId++, kind, x, y, dir: Math.floor(rnd(0, 4)), moving: false, wait: rnd(0, 3), tx: 0, ty: 0, t: rnd(0, 9), idle: 0, hop: 0, love: 0, stuck: 0, lastBark: 0, face: Math.random() < .5 ? 'left' : 'right', graze: 0, mode: 'alert' }, extra || {});
   }
   const ownedKinds = () => Object.keys(KINDS).filter(k => KINDS[k].owned);
   function spawn(S) {
@@ -272,7 +297,7 @@ const Animals = (() => {
     return moved;
   }
   function faceVec(a, dx, dy) {
-    if (Math.abs(dx) > Math.abs(dy) * 1.15) a.dir = dx < 0 ? 2 : 3;
+    if (Math.abs(dx) > Math.abs(dy) * 1.15) { a.dir = dx < 0 ? 2 : 3; a.face = dx < 0 ? 'left' : 'right'; }
     else if (Math.abs(dy) > Math.abs(dx) * 1.15) a.dir = dy < 0 ? 1 : 0;
   }
 
@@ -355,6 +380,64 @@ const Animals = (() => {
     }
   }
 
+  /* ovelha: anda devagar, para para PASTAR (65% das paradas) e tende a ficar perto de outra ovelha (rebanho). À noite fica parada. */
+  function sheepAI(a, dt, S) {
+    const K = KINDS.ovelha, pen = PENS.pasto;
+    if (!inIn(pen, Math.floor(a.x / TS), Math.floor(a.y / TS))) { a.moving = false; return; }
+    if (resting(K, S)) { a.moving = false; a.graze = 0; return; }
+    if (a.moving) {
+      const dx = a.tx - a.x, dy = a.ty - a.y, d = Math.hypot(dx, dy);
+      if (d < 3) { a.moving = false; a.wait = rnd(2.5, 7); a.graze = Math.random() < .65 ? a.wait : 0; }
+      else {
+        const mv = move(a, dx / d * K.speed * dt, dy / d * K.speed * dt, pen);
+        faceVec(a, dx, dy);
+        if (mv < .02) { a.moving = false; a.wait = rnd(.6, 2); }
+      }
+    } else {
+      a.wait -= dt; a.idle += dt; if (a.graze > 0) a.graze -= dt;
+      if (a.wait <= 0) {
+        const mates = list.filter(o => o.kind === 'ovelha' && o !== a), m = mates.length && Math.random() < .5 ? mates[Math.floor(Math.random() * mates.length)] : null;
+        const cx = m ? m.x + rnd(-70, 70) : a.x + rnd(-210, 210), cy = m ? m.y + rnd(-50, 50) : a.y + rnd(-150, 150);
+        a.tx = clamp(cx, (pen.in.x0 + .6) * TS, (pen.in.x1 + .4) * TS); a.ty = clamp(cy, (pen.in.y0 + 1) * TS, (pen.in.y1 + .5) * TS);
+        a.moving = true; a.idle = 0; a.graze = 0;
+        if (Math.random() < .2) E.Snd.baa(true);
+      }
+    }
+  }
+  /* coelho: salta (o movimento só acontece nos quadros NO AR do pulo; agachar e aterrissar são parados), senta com as orelhas mexendo ou mordisca. Foge de quem anda perto. À noite fica parado. */
+  const HOP_SPEED = 3.0;                       // vezes a velocidade média (só vale nos quadros no ar)
+  function hopAI(a, dt, S) {
+    const K = KINDS.coelho, pen = PENS.coelheira, P = E.P;
+    if (!inIn(pen, Math.floor(a.x / TS), Math.floor(a.y / TS))) { a.moving = false; return; }
+    if (resting(K, S)) { a.moving = false; a.mode = 'alert'; return; }
+    if (a.flee > 0) a.flee -= dt;
+    const startHop = (tx, ty, flee) => {
+      a.tx = clamp(tx, (pen.in.x0 + .6) * TS, (pen.in.x1 + .4) * TS); a.ty = clamp(ty, (pen.in.y0 + 1) * TS, (pen.in.y1 + .5) * TS);
+      a.moving = true; a.wp = 0; a.arrive = false; a.idle = 0; if (flee) a.flee = 1.4;
+    };
+    if (!a.moving) {
+      const dp = Math.hypot(P.x - a.x, P.y - a.y);
+      if (dp < 150 && P.moving && !(a.flee > 0)) { const dx = a.x - P.x, dy = a.y - P.y, d = Math.hypot(dx, dy) || 1; faceVec(a, dx, dy); startHop(a.x + dx / d * 110, a.y + dy / d * 90, true); return; }
+      a.wait -= dt; a.idle += dt;
+      if (a.wait <= 0) {
+        const ang = Math.random() * TAU, dist = rnd(45, 120);
+        startHop(a.x + Math.cos(ang) * dist, a.y + Math.sin(ang) * dist * .8, false);
+        const dx = a.tx - a.x, dy = a.ty - a.y; faceVec(a, dx, dy);
+      }
+      return;
+    }
+    const n = RABBIT.hop.length, fr = RABBIT.hop[Math.floor(a.wp || 0) % n];
+    if (!a.arrive && RABBIT.air.includes(fr)) {                 // no ar: anda; agachado ou aterrissando: parado
+      const dx = a.tx - a.x, dy = a.ty - a.y, d = Math.hypot(dx, dy), sp = Math.min(d, K.speed * HOP_SPEED * (a.flee > 0 ? 1.4 : 1) * dt);      // (nunca passa do alvo: com quadros longos ele oscilaria em volta)
+      if (d < 4) { a.arrive = true; a.endAt = (Math.floor((a.wp || 0) / n) + 1) * n; }
+      else { const mv = move(a, dx / d * sp, dy / d * sp, pen); faceVec(a, dx, dy); if (mv < .02) { a.arrive = true; a.endAt = (Math.floor((a.wp || 0) / n) + 1) * n; } }
+    }
+    if (!a.arrive && (a.wp || 0) >= 6 * n) { a.arrive = true; a.endAt = (Math.floor(a.wp / n) + 1) * n; }      // alvo que não chega (decoração no caminho): desiste depois de 6 pulos
+    if (a.arrive && (a.wp || 0) >= a.endAt) {                   // chegou: termina o pulo (aterrissa) e senta
+      a.moving = false; a.wait = rnd(1.2, 5); a.mode = Math.random() < .35 ? 'eat' : 'alert';
+    }
+  }
+
   function update(dt, S) {
     const P = E.P;
     for (const a of list) {
@@ -362,7 +445,8 @@ const Animals = (() => {
       if (SHEETS[a.kind]) a.wp = a.moving ? (a.wp || 0) + dt * (a === horse && riding ? HORSE.fpsRide : sheetFps(a)) : 0;      // fase do ciclo de caminhada; parou = quadro de repouso
       if (a.love > 0) { a.love -= dt; if (Math.random() < dt * 5) E.heart(a.x + rnd(-10, 10), a.y - KINDS[a.kind].h * .85); }
       if (a === horse && riding) { a.x = P.x; a.y = P.y; a.dir = P.dir; a.moving = P.moving && P.wk > .2; continue; }
-      if (a.kind === 'cachorro') dogAI(a, dt); else wanderAI(a, dt, S);
+      const ai = KINDS[a.kind].ai;
+      if (ai === 'dog') dogAI(a, dt); else if (ai === 'sheep') sheepAI(a, dt, S); else if (ai === 'hop') hopAI(a, dt, S); else wanderAI(a, dt, S);
     }
     // trufas: pegas ao passar perto
     if (S.truffleList) for (let i = S.truffleList.length - 1; i >= 0; i--) {
@@ -411,9 +495,11 @@ const Animals = (() => {
   }
 
   /* ---------------- desenho ---------------- */
-  function pickSprite(a) {
+  // quadro de uma espécie de sheet: { row, frame } (o desenho e os testes usam o mesmo)
+  const pickRow = (a, S) => KINDS[a.kind].pick ? KINDS[a.kind].pick(a, S) : null;
+  function pickSprite(a, S) {
     const im = IMGS[a.kind], K = KINDS[a.kind];
-    const alt = Math.floor(a.t * 3.4) % 2 === 0;
+    if (K.pick && S) { const p = K.pick(a, S), SH = SHEETS[a.kind]; return { img: im.frames[p.row][p.frame], flip: false, foot: SH.foot[p.row] }; }
     if (K.sheet) {                                              // sprite sheet: linha pela direção (cavalo, ovelha e coelho andam; os extras eat_*/shorn_* entram na Fase 5)
       const SH = SHEETS[a.kind], d = DIR_NAMES[a.dir] || 'down', L = SH.loop[d] || SH.loop.walk || SH.hop, idle = typeof SH.idle === 'number' ? SH.idle : SH.idle[d];
       const fr = a.moving ? L[Math.floor(a.wp || 0) % L.length] : idle;
@@ -446,8 +532,8 @@ const Animals = (() => {
     g.restore();
   }
   function drawAnimal(g, a, S) {
-    const K = KINDS[a.kind], pk = pickSprite(a), { img, flip } = pk, { w, h, sc } = sizeOf(a, img);
-    const bob = a.moving ? Math.abs(Math.sin(a.t * K.step)) * K.bob : Math.sin(a.t * 1.6 + a.id) * .5;
+    const K = KINDS[a.kind], pk = pickSprite(a, S), { img, flip } = pk, { w, h, sc } = sizeOf(a, img);
+    const bob = a.moving && K.bob ? Math.abs(Math.sin(a.t * K.step)) * K.bob : K.bob ? Math.sin(a.t * 1.6 + a.id) * .5 : 0;
     const hop = a.hop > 0 ? Math.sin(a.hop / .25 * Math.PI) * 9 : 0;
     E.shadow(g, a.x, a.y - 1, shadowW(pk, w, h, sc, .36), 5 + K.h * .05, .3);
     g.save(); g.translate(a.x, a.y - bob - hop);
@@ -553,7 +639,7 @@ const Animals = (() => {
     // compatibilidade com o que o jogo já usava (curral = o recinto principal; inArea/inIn/isFence valem para QUALQUER recinto)
     AREA: PENS.curral.area, IN: PENS.curral.in, GATE: PENS.curral.gates[0], DECOR: PENS.curral.decor,
     inArea: inAnyPen, inIn: inAnyIn, isFence, isGate: (x, y) => PEN_LIST.some(p => isGate(p, x, y)),
-    inAnyPen, keepClear, penOf, penTile, inLegacyArea: legacyIn, shopCatalog,
+    inAnyPen, keepClear, penOf, penTile, inLegacyArea: legacyIn, shopCatalog, pickRow, REST_FROM,
     load, bind, markSolid, markSolidLegacy, relayout, drawGround, spawn, update, at, collect, drawMounted,
     mount, dismount, isRiding, resetMorning, cows, pigs, dog, freeSpot, add, callDog, dogFollowing, meatReady, MIDDAY,
     get horse() { return horse; },

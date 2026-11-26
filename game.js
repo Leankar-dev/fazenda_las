@@ -200,9 +200,10 @@
       seeds: { cenoura: 8, tomate: 0, milho: 0, abobora: 0, maca: 0, laranja: 0, pessego: 0, limao: 0 },
       harvest: { cenoura: 0, tomate: 0, milho: 0, abobora: 0, maca: 0, laranja: 0, pessego: 0, limao: 0 },
       eggs: 0, stone: 0, wood: 0, milk: 0, truffle: 0, meat: 0, laid: 1,
-      owned: { vaca: 0, porco: 0, cavalo: 0 }, milked: [], meatDone: [], digs: [], truffleList: [],
+      owned: { vaca: 0, porco: 0, cavalo: 0, ...Rebanho.OWNED_DEFAULT }, milked: [], meatDone: [], digs: [], truffleList: [],
       up: { basket: 0, can: 0, boots: 0, rod: 0, reel: 0 },
       ...Pesca.defaults(),                      // fish · gear · bait (pesca.js)
+      ...Rebanho.defaults(),                    // reb: lã, carne, peles, acessórios, comida, relógios de tosquia/coleta (rebanho.js)
       char: 'fazendeiro', selSeed: 'cenoura', tool: 0, dir: 0, px: SPAWN.x, py: SPAWN.y,
       rain: false, soil: new Array(MW * MH).fill(0), crops: {}, obs: [], eggList: [], names: {},
       obsInit: false, world: 3, felled: [], goal: 0, stat: { till: 0, plant: 0, water: 0, harvest: 0, sold: 0, sleep: 0, fish: 0 }, won: false,
@@ -605,6 +606,9 @@
       chirp()   { const f = rnd(2400, 3600); tone(f, .07, 'sine', .06, 500); tone(f + 300, .07, 'sine', .06, 500, .1); if (Math.random() < .5) tone(f + 500, .06, 'sine', .05, 300, .2); },
       step()    { noise(.05, .06, 600, 'lowpass'); },
       egg()     { tone(880, .08, 'sine', .15); tone(1175, .12, 'sine', .15, 0, .07); },
+      baa(q)    { tone(330, .5, 'sawtooth', q ? .035 : .08, -70); tone(520, .38, 'sine', q ? .02 : .05, -120, .04); tone(300, .3, 'sawtooth', q ? .02 : .05, 20, .22); },
+      thump()   { tone(95, .09, 'sine', .14, -40); noise(.05, .07, 320, 'lowpass'); },
+      shear()   { noise(.12, .16, 3500, 'highpass', 0, 6200); noise(.12, .14, 3200, 'highpass', .13, 5800); noise(.1, .12, 3000, 'highpass', .27, 5400); },
       moo(q)    { tone(110, .75, 'sawtooth', q ? .04 : .09, -35); tone(165, .6, 'sine', q ? .03 : .07, -45, .03); },
       oink()    { noise(.12, .2, 700, 'bandpass', 0, 400); tone(190, .12, 'square', .06, -70); tone(150, .1, 'square', .05, -40, .15); noise(.1, .16, 600, 'bandpass', .15, 350); },
       bark()    { noise(.09, .3, 900, 'bandpass', 0, 500); tone(380, .1, 'square', .09, -160); tone(340, .09, 'square', .08, -140, .16); noise(.08, .25, 800, 'bandpass', .16, 400); },
@@ -798,10 +802,12 @@
     if (st.laid !== 1 && st.laid !== 2) { bad(); st.laid = 1; }
     st.seeds = objOf(st.seeds, PROD_KEYS, dflt.seeds); st.harvest = objOf(st.harvest, PROD_KEYS, dflt.harvest);
     for (const k of PROD_KEYS) { Pint(st.seeds, k, 0, 1e6, dflt.seeds[k]); Pint(st.harvest, k, 0, 1e6, 0); }
-    st.owned = objOf(st.owned, Object.keys(ANIMAL_SHOP), dflt.owned);
-    for (const k in ANIMAL_SHOP) Pint(st.owned, k, 0, ANIMAL_SHOP[k].max, 0);      // sem isso um save com 4000 porcos cria 4000 porcos
+    st.owned = objOf(st.owned, [...Object.keys(ANIMAL_SHOP), ...Rebanho.KINDS], dflt.owned);
+    for (const k in ANIMAL_SHOP) Pint(st.owned, k, 0, ANIMAL_SHOP[k].max, 0);
+    for (const k of Rebanho.KINDS) Pint(st.owned, k, 0, Rebanho.ANIMALS[k].max, 0);      // sem isso um save com 4000 porcos cria 4000 porcos
     st.stat = objOf(st.stat, Object.keys(dflt.stat), dflt.stat);
     for (const k in dflt.stat) Pint(st.stat, k, 0, 1e9, 0);
+    Rebanho.sanitize(st, K);      // lã, peles, acessórios, comida e relógios (regras no rebanho.js)
     Pesca.sanitize(st, K);      // peixes, acessórios, iscas e níveis da vara/carretel (regras no pesca.js; save hostil não cria 1e9 peixes)
     // listas do dia
     st.milked = Array.isArray(st.milked) ? st.milked.slice(0, 16).map(v => !!v) : (bad(), []);
@@ -1332,6 +1338,8 @@
         floatText(a.x, a.y - 52, a.kind === 'cachorro' ? 'Au au! 💕' : 'Oinc! 💕', '#ffd0dc'); break;
       }
       case 'vaca': milkCow(it.ref); break;
+      case 'ovelha': shearSheep(it.ref, it); break;
+      case 'coelho': takeRabbit(it.ref, it); break;
       case 'cavalo': {
         const a = it.ref; if (!Animals.mount(a)) break;
         if (!boxBlocked(a.x, a.y)) { P.x = a.x; P.y = a.y; }
@@ -1367,6 +1375,32 @@
     Snd.oink(); Snd.harvest();
     burst(a.x, a.y - 16, 12, ['#ffb0b8', '#ff8f9c', '#fff0f0'], { min: 25, max: 80, up: 60, r0: 1.8, r1: 3.4, life: 1 });
     floatText(a.x, a.y - 60, '+1 carne', '#ffd0d6'); fly(a.x, a.y - 24, ICONS_CANVAS.meat); bump($('bag'));
+  }
+  /* ovelhas e coelhos (Fase 5): a regra é do rebanho.js; aqui só o efeito (som, partículas, texto, ícone voando até o cesto) */
+  function petAnimal(a, voice, txt) {
+    a.love = 1.6; a.hop = .25; voice();
+    for (let i = 0; i < 3; i++) setTimeout(() => heart(a.x + rnd(-12, 12), a.y - 30), i * 120);
+    floatText(a.x, a.y - 46, txt, '#ffd0dc');
+  }
+  function shearSheep(a, it) {
+    const r = Rebanho.shear(S, a.idx);
+    if (!r.ok) {                                      // nunca um beep mudo: diz o motivo e ainda faz carinho
+      toast(r.why.charAt(0).toUpperCase() + r.why.slice(1) + (r.why === 'precisa da tesoura de tosa' ? ' — ela vai à venda no empório' : ''), r.why === 'precisa da tesoura de tosa' || /cheio/.test(r.why) ? 'bad' : undefined);
+      petAnimal(a, Snd.baa, 'Bééé 💕'); return;
+    }
+    S.stat.harvest++; a.hop = .25; a.moving = false; a.graze = 0; a.wait = Math.max(a.wait, 2.5);
+    Snd.shear(); Snd.harvest();
+    burst(a.x, a.y - 22, 14, ['#ffffff', '#f6f1e4', '#e8dfc8'], { min: 25, max: 85, up: 55, r0: 2, r1: 4, life: 1.1 });
+    floatText(a.x, a.y - 66, '+' + r.gained + ' lã', '#fff7e0'); fly(a.x, a.y - 28, Animals.IMGS.props.la_bruta); bump($('bag')); requestSave();
+  }
+  function takeRabbit(a, it) {
+    const r = Rebanho.collectRabbit(S, a.idx);
+    if (!r.ok) { toast(r.why.charAt(0).toUpperCase() + r.why.slice(1) + '. Volte amanhã!'); petAnimal(a, Snd.thump, 'Fiu 💕'); return; }
+    S.stat.harvest++; a.hop = .25; a.moving = false; a.wait = Math.max(a.wait, 2.5); a.mode = 'alert';
+    Snd.thump(); Snd.harvest();
+    const meat = r.kind === 'rmeat';
+    burst(a.x, a.y - 14, 10, meat ? ['#ffb0b8', '#ff8f9c', '#fff0f0'] : ['#f3ead9', '#d9ccb4', '#ffffff'], { min: 25, max: 75, up: 55, r0: 1.6, r1: 3, life: 1 });
+    floatText(a.x, a.y - 52, '+' + r.gained + (meat ? ' carne' : ' pele') + (r.extra ? ' ✨' : ''), meat ? '#ffd0d6' : '#f3ead9'); fly(a.x, a.y - 22, Animals.IMGS.props[meat ? 'carne_coelho' : 'pele_coelho']); bump($('bag')); requestSave();
   }
   function heart(x, y) { parts.push({ k: 'heart', x, y, vx: rnd(-10, 10), vy: -42, g: 0, life: 0, max: 1.1, r: rnd(5, 8), c: pick(['#ff6b8b', '#ff8fa8', '#ffb0c4']) }); }
   function takeTruffle(t) {
@@ -1464,6 +1498,7 @@
     // animais: ordenha e carne renovadas, trufas e tesouro do cachorro
     cancelCast(); if (lake) lake.restock(Pesca.LAKE_TARGET);      // amanhece com o lago cheio de peixes
     Animals.resetMorning(); S.milked = []; S.meatDone = []; S.truffleList = [];
+    Rebanho.dailyTick(S);      // gasta o feno do cocho e a ração dos coelhos; a lã e o produto do coelho voltam pelos relógios de dia
     for (const pg of Animals.pigs()) if (Math.random() < .75) {
       for (let tries = 0; tries < 10; tries++) {
         const tx = Math.floor(rnd(Animals.IN.x0 + 1, Animals.IN.x1)), ty = Math.floor(rnd(Animals.IN.y0 + 1, Animals.IN.y1));
@@ -2559,7 +2594,7 @@
       SaveManager.session.startNew(prev); save();
     }
     if (loadIt) openMenu();      // Continuar: o jogo começa PAUSADO (menu aberto): nenhum tempo de jogo se perde e o clique serve de gesto para o áudio
-    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, openMap, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKERS, PIMGS, DOCK, POND, get lake() { return lake; }, get cast() { return cast; }, fishStart, fishPress, openEatFish, openShop, deepWater, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
+    if (/[?&]debug\b/.test(location.search)) window.__game = { closeModal, openMenu, openMap, Rebanho, S, P, get act() { return act; }, useTool, interact, toast, endDay, sleepSequence, cropStage, targetTile, facingTile, chickens, get eggs() { return eggs; }, save, openShop, selectTool, startGame, setCharacter, get CHAR() { return CHAR; }, get IMGS() { return IMGS; }, WALKERS, PIMGS, DOCK, POND, get lake() { return lake; }, get cast() { return cast; }, fishStart, fishPress, openEatFish, openShop, deepWater, sellAll, Animals, get trees() { return trees; }, treeGrid, cam, getZoom: () => zoom, step: (dt) => { update(dt); render(); }, get obs() { return obs; }, TS, blocked, MW, MH };
   }
 
   async function boot() {
